@@ -30,6 +30,15 @@ Lemma l1 : forall n, even (2 + n) -> even n.
             | even_0 => _
             | even_SS n x => _
           end); simpl.  
+  Restart.
+  intros. 
+  invert H. 
+
+  Grab Existential Variables. 
+  simpl. auto. 
+  simpl. constructor. 
+Abort. 
+  
   Restart. 
   intros. 
   refine (let diag :=
