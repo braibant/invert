@@ -123,7 +123,7 @@ let invert h gl =
       end    
     in 
     (* an inductive family is an inductive type with its parameters *)
-    let ind_family = Inductiveops.make_ind_family (ind, []) in 
+    let ind_family = Inductiveops.make_ind_family (ind,[]) in 
     let constructors = Inductiveops.get_constructors env ind_family in 
     
     (* each branch must be presented as \args.term *)
@@ -131,15 +131,16 @@ let invert h gl =
     let branches diag =
       Array.map 
 	(fun c ->       
-	  let open Inductiveops in 
- 	  let env = (Environ.push_rel_context c.cs_args env) in 
-	  let concl_ty = Term.mkApp (diag, c.cs_concl_realargs) in 
+ 	  let env = (Environ.push_rel_context c.Inductiveops.cs_args env) in 
+	  let concl_ty = Term.mkApp (diag, c.Inductiveops.cs_concl_realargs) in 
 	  let subgoal = Evarutil.e_new_evar sigma env  concl_ty in
-	  Termops.it_mkLambda_or_LetIn (Term.mkCast (subgoal, Term.DEFAULTcast,concl_ty)) c.cs_args
-	) constructors
-	
+	  Termops.it_mkLambda_or_LetIn (Term.mkCast (subgoal, Term.DEFAULTcast,concl_ty)) c.Inductiveops.cs_args
+	)
+	constructors	
     in
-    (fun gl -> 
+    Tacticals.tclTHEN
+      (Refiner.tclEVARS !sigma)
+      (fun gl -> 
 	    (* the proof term *)
 	    let term = 
 	      begin 
@@ -165,7 +166,7 @@ let invert h gl =
 	      Format.printf "%a\n%!" pp_constr term;    
 	      Tactics.refine term gl
 	    )
-    ) gl
+	  ) gl
   
   | _ -> assert false
   end
