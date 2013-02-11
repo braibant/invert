@@ -31,50 +31,22 @@ Lemma l1 : forall n, even (2 + n) -> even n.
             | even_SS n x => _
           end); simpl.  
   Restart.
-  intros. 
-  refine
-    ( let diag  := (fun x : nat =>
-            match x return Prop with
-                           | O => even x
-                           | S x0 =>
-                               match x0 return Prop with
-                               | O => even x0
-                               | S x1 => even x1
-                               end
-                           end) 
-                     in 
-      match
-        H in (even args)
-        return (diag args)
-                 
-      with
-        | even_0 => _ : diag 0
-        | even_SS n x =>
-          _ : diag (S (S n))
-      end); simpl. constructor. auto. 
-Qed. 
-        
-  invert H. 
-
-  Grab Existential Variables. 
-  simpl. auto. 
+  refine (
+      (fun (n : nat) (H : even (plus (S (S O)) n)) =>
+         let diag :=
+             fun x : nat =>
+               match x return Prop with
+                 | O => even x
+                 | S x0 => match x0 return Prop with
+                            | O => even x0
+                            | S x1 => even x1
+             end
+               end in
+         
+         match H in (even args) return (diag args) with
+           | even_0 => _
+           | even_SS x x0 => _
+         end)).
   simpl. constructor. 
-Abort. 
-  
-  Restart. 
-  intros. 
-  refine (let diag :=
-       fun x : nat =>
-                                match x return Prop with
-                              | O => even x
-                              | S x0 =>
-                                  match x0 return Prop with
-                                  | O => even x0
-                                  | S x1 => even x1
-                                  end
-                              end in
-                            match H in (even args) return (diag args) with
-                            | even_0 => _:diag O
-                            | even_SS n x => _:diag (S (S n))
-                            end).
-  apply even_0. simpl. auto. 
+  simpl. auto. 
+Qed. 

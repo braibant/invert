@@ -33,7 +33,6 @@ let cps_mk_letin
     Tacticals.tclTHEN letin (k (Term.mkVar name)) goal
 
     
-
 let assert_vector 
     (c: Term.constr array) 		(* vector of the types of each sub-goal *)
     (k : Names.identifier array -> Proof_type.tactic)
@@ -132,7 +131,7 @@ let invert h gl =
   (* get the name of the inductive and the list of arguments it is applied to *)
   let (ind, constr_list) = Inductive.find_inductive env h_ty in 
   (* extra information for the match *)
-  let case_info = Inductiveops.make_case_info env ind Term.MatchStyle in 
+  let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in 
   
   begin match constr_list with 
   | [t] -> 
@@ -151,7 +150,9 @@ let invert h gl =
 	      (Term.mkApp (diag, c.Inductiveops.cs_concl_realargs))
 	      ctx
 	  in 
-	  let body subgoal = subgoal
+	  let body subgoal = 
+	    Term.mkApp (subgoal, c.Inductiveops.cs_args)
+	    (* Term.mkCast (subgoal, Term.DEFAULTcast, concl_ty) *)
 	    (* Termops.it_mkLambda_or_LetIn  *)
 	    (*   (Term.mkCast (subgoal, Term.DEFAULTcast,concl_ty)) c.Inductiveops.cs_args *)
 	  in 
