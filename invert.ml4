@@ -45,11 +45,11 @@ let rec diag sigma env t (a: Term.constr) b return  =
 	    let args_ty' = List.rev args_ty in 
 	    if i + 1 = snd head_t 
 	    then 
-	    (* in this case, we continue to match on [t] *)
+		(* in this case, we continue to match on [t] *)
 	      begin 
 		let env = (Environ.push_rel_context args_ty env) in 
-	      (* we must match each of the arguments of the constructor
-		 against the corresponding term in the arguments of t *)
+		  (* we must match each of the arguments of the constructor
+		     against the corresponding term in the arguments of t *)
 		let rec aux k : Term.constr= 
 		  if k = Array.length args_t 
 		  then 
@@ -64,7 +64,7 @@ let rec diag sigma env t (a: Term.constr) b return  =
 		aux 0	      
 	      end
 	    else 
-	    (* otherwise, in the underscore case, we return [b] *)
+		(* otherwise, in the underscore case, we return [b] *)
 	      Termops.it_mkLambda_or_LetIn (Term.mkApp (b, [| Term.mkVar x |])) args_ty	 	    
 	  ) 
 	  branches_type
@@ -72,7 +72,7 @@ let rec diag sigma env t (a: Term.constr) b return  =
 	let return = 
 	  let context = 
 	    (Names.Anonymous, None, tty) :: 
-	    List.map (fun t -> Names.Anonymous, None, Typing.type_of env sigma t) (List.rev args)
+	      List.map (fun t -> Names.Anonymous, None, Typing.type_of env sigma t) (List.rev args)
 	  in 
 	  Termops.it_mkLambda_or_LetIn 
 	    (
@@ -114,34 +114,32 @@ let invert h gl =
 	  (fun args -> 
 	    (* the [as] part *)
 	    mk_fun (!! "as_x") h_ty
-		  (fun x ->
+	      (fun x ->
 		    (* for instance if the conclusion is [even n] and the
 		       inductive is [even n'], we can substitute [n] in the goal with [n']  *)
-		    Term.mkApp (Term.mkVar diag, [|Term.mkVar args|])
-		  )
+		Term.mkApp (Term.mkVar diag, [|Term.mkVar args|])
+	      )
 	  )	
       end    
     in 
+    (* an inductive family is an inductive type with its parameters *)
+    let ind_family = Inductiveops.make_ind_family (ind, []) in 
+    let constructors = Inductiveops.get_constructors env ind_family in 
+    
+    (* each branch must be presented as \args.term *)
+    let sigma = ref sigma in 
+    let branches diag =
+      Array.map 
+	(fun c ->       
+	  let open Inductiveops in 
+ 	  let env = (Environ.push_rel_context c.cs_args env) in 
+	  let concl_ty = Term.mkApp (diag, c.cs_concl_realargs) in 
+	  let subgoal = Evarutil.e_new_evar sigma env  concl_ty in
+	  Termops.it_mkLambda_or_LetIn (Term.mkCast (subgoal, Term.DEFAULTcast,concl_ty)) c.cs_args
+	) constructors
 	
-	(* the type of each constructors *)
-	let (branches_type: Term.types array) = Inductiveops.arities_of_constructors env ind in 
-	
-	(* each branch must be presented as \args.term *)
-	let sigma = ref sigma in 
-	let branches = 
-	  let branches = Array.map 
-	    (fun ty ->       
-	      (* we decompose the type of this particular constructor *)
- 	      let (args_ty,concl_ty) = Term.decompose_prod_assum ty in
-	      let env = (Environ.push_rel_context args_ty env) in 
-	      let subgoal = Evarutil.e_new_evar sigma env concl in 
-	      Termops.it_mkLambda_or_LetIn (subgoal) args_ty	
-	    ) branches_type in 
-	  branches
-	in
-	Tacticals.tclTHEN
-	  (Refiner.tclEVARS !sigma)
-	  (fun gl -> 
+    in
+    (fun gl -> 
 	    (* the proof term *)
 	    let term = 
 	      begin 
@@ -153,8 +151,13 @@ let invert h gl =
 		  (!! "diag") 
 		  diag
 		  (Typing.type_of env sigma diag)
-		  (fun diag -> 		
-		    Term.mkCase (case_info,return_clause diag, Term.mkVar h, branches) )
+		  (fun diag -> 	
+		    let branches = branches (Term.mkVar diag) in 
+		    Array.iter (fun x -> Format.printf "%a\n%!" pp_constr x);
+		    Term.mkCase (case_info,
+				 return_clause diag, 
+				 Term.mkVar h, 
+				 branches))
 	      end
 	    in 
 	    (
@@ -162,7 +165,7 @@ let invert h gl =
 	      Format.printf "%a\n%!" pp_constr term;    
 	      Tactics.refine term gl
 	    )
-	  ) gl
+    ) gl
   
   | _ -> assert false
   end
