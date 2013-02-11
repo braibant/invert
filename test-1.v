@@ -32,6 +32,28 @@ Lemma l1 : forall n, even (2 + n) -> even n.
           end); simpl.  
   Restart.
   intros. 
+  refine
+    ( let diag  := (fun x : nat =>
+            match x return Prop with
+                           | O => even x
+                           | S x0 =>
+                               match x0 return Prop with
+                               | O => even x0
+                               | S x1 => even x1
+                               end
+                           end) 
+                     in 
+      match
+        H in (even args)
+        return (diag args)
+                 
+      with
+        | even_0 => _ : diag 0
+        | even_SS n x =>
+          _ : diag (S (S n))
+      end); simpl. constructor. auto. 
+Qed. 
+        
   invert H. 
 
   Grab Existential Variables. 

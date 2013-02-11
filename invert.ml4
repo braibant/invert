@@ -27,13 +27,29 @@ let cps_mk_letin
     (k : Term.constr -> Proof_type.tactic)
 : Proof_type.tactic =
   fun goal ->
-    (*
-      let name = (Names.id_of_string name) in
-      let name =  Tactics.fresh_id [] name goal in
-      let letin = (Tactics.letin_tac None  (Names.Name name) c None nowhere) in
-      Tacticals.tclTHEN letin (k (Term.mkVar name)) goal
-    *)
-     k c goal
+    let name = (Names.id_of_string name) in
+    let name =  Tactics.fresh_id [] name goal in
+    let letin = (Tactics.letin_tac None  (Names.Name name) c None nowhere) in
+    Tacticals.tclTHEN letin (k (Term.mkVar name)) goal
+
+    
+
+let assert_vector 
+    (c: Term.constr array) 		(* vector of the types of each sub-goal *)
+    (k : Names.identifier array -> Proof_type.tactic)
+    : Proof_type.tactic = 
+  let rec aux i l = 
+    if i = Array.length c 
+    then k (Array.of_list (List.rev l))
+    else 
+      fun goal -> 
+	let name = (Names.id_of_string "__") in
+	let name =  Tactics.fresh_id [] name goal in
+	let t = (Tactics.assert_tac  (Names.Name name) c.(i)) in
+	let _ = Format.printf "subgoal %i: %a\n" i pp_constr c.(i) in 
+	Tacticals.tclTHENS t [Tacticals.tclIDTAC; (aux (succ i) (name :: l))] goal
+  in
+  aux 0 []
 
 (* constructs the term fun x => match x with | t => a | _ => b end
    assume that t is in head normal form *)
@@ -64,11 +80,11 @@ let rec diag sigma env t (a: Term.constr) b return  =
 	    let args_ty' = List.rev args_ty in 
 	    if i + 1 = snd head_t 
 	    then 
-		(* in this case, we continue to match on [t] *)
+	      (* in this case, we continue to match on [t] *)
 	      begin 
 		let env = (Environ.push_rel_context args_ty env) in 
-		  (* we must match each of the arguments of the constructor
-		     against the corresponding term in the arguments of t *)
+		(* we must match each of the arguments of the constructor
+		   against the corresponding term in the arguments of t *)
 		let rec aux k : Term.constr= 
 		  if k = Array.length args_t 
 		  then 
@@ -83,7 +99,7 @@ let rec diag sigma env t (a: Term.constr) b return  =
 		aux 0	      
 	      end
 	    else 
-		(* otherwise, in the underscore case, we return [b] *)
+	      (* otherwise, in the underscore case, we return [b] *)
 	      Termops.it_mkLambda_or_LetIn (Term.mkApp (b, [| Term.mkVar x |])) args_ty	 	    
 	  ) 
 	  branches_type
@@ -102,8 +118,7 @@ let rec diag sigma env t (a: Term.constr) b return  =
       | _ -> Term.mkApp (a, [|Term.mkVar x|])
     )
 ;;
-    
-    
+
 
 let invert h gl = 
   let env = Tacmach.pf_env gl in
@@ -123,65 +138,67 @@ let invert h gl =
   | [t] -> 
     let ind_ty = (Inductiveops.type_of_inductive env ind) in 
     let arity, sort = Term.destArity ind_ty in 
+    let ind_family = Inductiveops.make_ind_family (ind,[]) in 
+    let constructors = Inductiveops.get_constructors env ind_family in 
     
-    cps_mk_letin "diag"
-      (diag sigma env t (Term.mkInd ind) (Term.mkInd ind) (Term.mkSort sort))
-      begin 
-	fun diag gl -> 
-	  
-	(* return clause *)
-	  let return_clause = 
-	  begin 	
-	    let _ = assert (List.length arity = 1) in	(* for now *)
-	    let (_,_,args_ty) = List.hd arity in 
-	    (* the [in] part *)
-	    mk_fun (!! "args") args_ty
-	      (fun args -> 
-		(* the [as] part *)
-		mk_fun (!! "as_x") h_ty
-		  (fun x ->
+    let diag = diag sigma env t (Term.mkInd ind) (Term.mkInd ind) (Term.mkSort sort) in 
+    let branches diag = 
+      Array.map 
+	(fun c ->       
+ 	  let ctx =  c.Inductiveops.cs_args  in 
+	  let concl_ty =
+	    Termops.it_mkProd_or_LetIn 
+	      (Term.mkApp (diag, c.Inductiveops.cs_concl_realargs))
+	      ctx
+	  in 
+	  let body subgoal = subgoal
+	    (* Termops.it_mkLambda_or_LetIn  *)
+	    (*   (Term.mkCast (subgoal, Term.DEFAULTcast,concl_ty)) c.Inductiveops.cs_args *)
+	  in 
+	  (concl_ty, body)
+	)
+	constructors	
+    in 
+    let return_clause diag =       
+      begin 	
+	let _ = assert (List.length arity = 1) in	(* for now *)
+	let (_,_,args_ty) = List.hd arity in 
+	(* the [in] part *)
+	mk_fun (!! "args") args_ty
+	  (fun args -> 
+	    (* the [as] part *)
+	    mk_fun (!! "as_x") h_ty
+	      (fun x ->
 		(* for instance if the conclusion is [even n] and the
 		   inductive is [even n'], we can substitute [n] in the goal with [n']  *)
-		    Term.mkApp (diag, [|Term.mkVar args|])
-		  )
-	      )	
-	  end    
-	  in 
-	  (* an inductive family is an inductive type with its parameters *)
-	  let ind_family = Inductiveops.make_ind_family (ind,[]) in 
-	  let constructors = Inductiveops.get_constructors env ind_family in 
-	  
-	  (* each branch must be presented as \args.term *)
-	  let sigma = ref sigma in 
-	  let term = 
-	    begin 
-	      let branches = 
-		Array.map 
-		  (fun c ->       
- 		    let env = (Environ.push_rel_context c.Inductiveops.cs_args env) in 
-		    let concl_ty = Term.mkApp (diag, c.Inductiveops.cs_concl_realargs) in 
-		    let sigma',subgoal = Evarutil.new_evar !sigma env  concl_ty in
-		    sigma := sigma';
-		    Termops.it_mkLambda_or_LetIn 
-		      (Term.mkCast (subgoal, Term.DEFAULTcast,concl_ty)) c.Inductiveops.cs_args
-		  )
-		  constructors	
-	      in 
-	      Term.mkCase (case_info,
-			   return_clause, 
-			   Term.mkVar h, 
-			   branches)
-	    end
-	      
-	  in 
-	  (
-	    Format.printf "%a\n" pp_constrs constr_list;
-	    Format.printf "%a\n%!" pp_constr term;    
-	    Tacticals.tclTHEN
-	      (Refiner.tclEVARS !sigma)
-	      ( Tactics.refine term) gl
+		Term.mkApp (diag, [|Term.mkVar args|])
+	      )
+	  )	
+      end
+	
+    in
+    cps_mk_letin "diag" diag
+      (fun diag -> 
+	let branches = branches diag in 
+	assert_vector 
+	  (Array.map fst branches)
+	  (fun vect -> 
+	    let term = 
+	      Term.mkCase
+		(case_info, 
+		 return_clause diag, 
+		 Term.mkVar h, 
+		 Array.mapi 
+		   (
+		     fun i (_,t) -> 
+		       (t (Term.mkVar vect.(i)))
+		   ) branches
+		)
+	    in 
+	    Format.printf "proof term: %a\n" pp_constr term;
+	    Tactics.refine term 
 	  )
-      end gl	    
+      ) gl
   | _ -> assert false
   end
 ;;
