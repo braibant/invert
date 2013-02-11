@@ -42,7 +42,7 @@ let assert_vector
     then k (Array.of_list (List.rev l))
     else 
       fun goal -> 
-	let name = (Names.id_of_string "__") in
+	let name = (Names.id_of_string "invert") in
 	let name =  Tactics.fresh_id [] name goal in
 	let t = (Tactics.assert_tac  (Names.Name name) c.(i)) in
 	let _ = Format.printf "subgoal %i: %a\n" i pp_constr c.(i) in 
