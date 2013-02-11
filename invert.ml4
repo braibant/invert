@@ -61,7 +61,7 @@ let rec diag sigma env t (a: Term.constr) b return  =
     tty 
     (fun x -> 
       let (ind, args) = Inductive.find_inductive env tty in 
-      let case_info = Inductiveops.make_case_info env ind Term.MatchStyle in 
+      let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in 
       (* the type of each constructor *)
       let (branches_type: Term.types array) = Inductiveops.arities_of_constructors env ind in       
       try
@@ -130,8 +130,6 @@ let invert h gl =
   
   (* get the name of the inductive and the list of arguments it is applied to *)
   let (ind, constr_list) = Inductive.find_inductive env h_ty in 
-  (* extra information for the match *)
-  let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in 
   
   begin match constr_list with 
   | [t] -> 
@@ -139,8 +137,7 @@ let invert h gl =
     let arity, sort = Term.destArity ind_ty in 
     let ind_family = Inductiveops.make_ind_family (ind,[]) in 
     let constructors = Inductiveops.get_constructors env ind_family in 
-    
-    let diag = diag sigma env t (Term.mkInd ind) (Term.mkInd ind) (Term.mkSort sort) in 
+    let diag = diag sigma env t (Term.mkInd ind) (Term.mkInd ind) (Term.mkSort sort) in
     let branches diag = 
       Array.map 
 	(fun c ->       
@@ -150,11 +147,18 @@ let invert h gl =
 	      (Term.mkApp (diag, c.Inductiveops.cs_concl_realargs))
 	      ctx
 	  in 
+	  let _ = Format.printf "concl-ty: %a\n" pp_constr concl_ty in 
 	  let body subgoal = 
-	    Term.mkApp (subgoal, c.Inductiveops.cs_args)
-	    (* Term.mkCast (subgoal, Term.DEFAULTcast, concl_ty) *)
-	    (* Termops.it_mkLambda_or_LetIn  *)
-	    (*   (Term.mkCast (subgoal, Term.DEFAULTcast,concl_ty)) c.Inductiveops.cs_args *)
+	    let x =
+	      Namegen.it_mkLambda_or_LetIn_name env 
+		(Term.mkApp (subgoal, Termops.extended_rel_vect 0 ctx))
+		ctx
+	    in 
+	    Format.printf "subgoal: %a\n" pp_constr x;
+	    x
+	  (* Termops.it_mkLambda_or_LetIn  *)
+	  (* (Term.mkCast (subgoal, Term.DEFAULTcast, concl_ty)) *)
+	  (*   (Term.mkCast (subgoal, Term.DEFAULTcast,concl_ty)) c.Inductiveops.cs_args *)
 	  in 
 	  (concl_ty, body)
 	)
@@ -183,7 +187,10 @@ let invert h gl =
 	let branches = branches diag in 
 	assert_vector 
 	  (Array.map fst branches)
-	  (fun vect -> 
+	  (fun vect gl -> 
+	    let env = Tacmach.pf_env gl in
+	    (* extra information for the match *)
+	    let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in 	
 	    let term = 
 	      Term.mkCase
 		(case_info, 
@@ -197,7 +204,7 @@ let invert h gl =
 		)
 	    in 
 	    Format.printf "proof term: %a\n" pp_constr term;
-	    Tactics.refine term 
+	    Tactics.refine term gl
 	  )
       ) gl
   | _ -> assert false

@@ -1,4 +1,4 @@
-Inductive even : nat -> Prop :=
+Inductive even : nat -> Type :=
   | even_0 : even 0 
   | even_SS : forall n, even n -> even (S (S n)).
 
@@ -6,7 +6,7 @@ Declare ML Module "invert".
 Lemma l1 : forall n, even (2 + n) -> even n. 
   intros. Set Printing All.
   set (diag := fun x =>                                
-                 match x return Prop with
+                 match x return Type with
                    | S (S x1) => even x1 
                    | _ => even x
                  end). 
@@ -20,17 +20,19 @@ Lemma l1 : forall n, even (2 + n) -> even n.
   Restart. 
   intros. 
   set (diag := fun x =>                                
-                 match x return Prop with
+                 match x return Type with
                    | S (S x1) => even x1 
                    | _ => even n
                  end). 
-  
   refine (match H in even args return diag args
           with 
             | even_0 => _
             | even_SS n x => _
           end); simpl.  
   Restart.
+  intros. 
+  intros. invert H. simpl.  constructor. simpl; intros; auto. Show Proof. 
+Qed. 
   refine (
       (fun (n : nat) (H : even (plus (S (S O)) n)) =>
          let diag :=
