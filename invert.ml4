@@ -18,7 +18,7 @@ let mk_let
 
 (* constructs the term fun x => match x with | t => a | _ => b end
    assume that t is in head normal form *)
-let rec diag sigma env t (a: Term.constr) b = 
+let rec diag sigma env t (a: Term.constr) b return  = 
   let tty = Typing.type_of env sigma t in 
   let t = Tacred.hnf_constr env sigma t in 
   let _ = Format.printf "diag %a %a %a\n" pp_constr t pp_constr a pp_constr b in
@@ -59,12 +59,13 @@ let rec diag sigma env t (a: Term.constr) b =
 		      args_t.(k) 
 		      (aux (succ k)) 
 		      b
+		      return
 		in 
 		aux 0	      
 	      end
 	    else 
 	    (* otherwise, in the underscore case, we return [b] *)
-	      Termops.it_mkLambda_or_LetIn b args_ty	 	    
+	      Termops.it_mkLambda_or_LetIn (Term.mkApp (b, [| Term.mkVar x |])) args_ty	 	    
 	  ) 
 	  branches_type
 	in
@@ -75,8 +76,8 @@ let rec diag sigma env t (a: Term.constr) b =
 	  in 
 	  Termops.it_mkLambda_or_LetIn 
 	    (
-	      Typing.type_of env sigma b
-	  ) context	  
+	      return
+	    ) context	  
 	in Term.mkCase (case_info,return,Term.mkVar x, branches) 
       with 
       | _ -> Term.mkApp (a, [|Term.mkVar x|])
@@ -101,26 +102,26 @@ let invert h gl =
   
   begin match constr_list with 
   | [t] -> 
+    let ind_ty = (Inductiveops.type_of_inductive env ind) in 
+    let arity, sort = Term.destArity ind_ty in 
     (* return clause *)
     let return_clause diag = 
       begin 	
-	let ind_ty = (Inductiveops.type_of_inductive env ind) in 
-	let arity, sort = Term.destArity ind_ty in 
 	let _ = assert (List.length arity = 1) in	(* for now *)
 	let (_,_,args_ty) = List.hd arity in 
-	    (* the [in] part *)
+	(* the [in] part *)
 	mk_fun (!! "args") args_ty
 	  (fun args -> 
-		(* the [as] part *)
+	    (* the [as] part *)
 	    mk_fun (!! "as_x") h_ty
 		  (fun x ->
 		    (* for instance if the conclusion is [even n] and the
 		       inductive is [even n'], we can substitute [n] in the goal with [n']  *)
 		    Term.mkApp (Term.mkVar diag, [|Term.mkVar args|])
 		  )
-	      )	
-	  end    
-	in 
+	  )	
+      end    
+    in 
 	
 	(* the type of each constructors *)
 	let (branches_type: Term.types array) = Inductiveops.arities_of_constructors env ind in 
@@ -146,7 +147,8 @@ let invert h gl =
 	      begin 
 		let env = Tacmach.pf_env gl in
 		let sigma = Tacmach.project gl in 
-		let diag = (diag sigma env t (Term.mkInd ind) h_ty) in       
+		let diag = (diag sigma env t (Term.mkInd ind) (Term.mkInd ind) (Term.mkSort sort)) in    
+		let _ = Format.printf "diag : %a\n" pp_constr diag in
 		mk_let 
 		  (!! "diag") 
 		  diag
