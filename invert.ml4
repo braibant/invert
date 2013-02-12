@@ -24,17 +24,18 @@ let nowhere =
 let cps_mk_letin
     (name:string)
     (c: Term.constr)
-    (k : Term.constr -> Proof_type.tactic)
+    (k : Names.identifier  -> Proof_type.tactic)
 : Proof_type.tactic =
   fun goal ->
     let name = (Names.id_of_string name) in
     let name =  Tactics.fresh_id [] name goal in
     let letin = (Tactics.letin_tac None  (Names.Name name) c None nowhere) in
-    Tacticals.tclTHEN letin (k (Term.mkVar name)) goal
+    Tacticals.tclTHEN letin (k name) goal
 
     
 let assert_vector 
     (c: Term.constr array) 		(* vector of the types of each sub-goal *)
+    subtac
     (k : Names.identifier array -> Proof_type.tactic)
     : Proof_type.tactic = 
   let rec aux i l = 
@@ -46,7 +47,8 @@ let assert_vector
 	let name =  Tactics.fresh_id [] name goal in
 	let t = (Tactics.assert_tac  (Names.Name name) c.(i)) in
 	let _ = Format.printf "subgoal %i: %a\n" i pp_constr c.(i) in 
-	Tacticals.tclTHENS t [Tacticals.tclIDTAC; (aux (succ i) (name :: l))] goal
+	Tacticals.tclTHENS t [ Tacticals.tclTHEN (Tactics.clear l) subtac; 
+			       aux (succ i) (name :: l)] goal
   in
   aux 0 []
 
@@ -172,7 +174,7 @@ let invert h gl =
 	mk_fun (!! "args") args_ty
 	  (fun args -> 
 	    (* the [as] part *)
-	    mk_fun (!! "as_x") h_ty
+	    mk_fun (!! "as_x") (Term.mkApp (Term.mkInd ind, [| Term.mkVar args |]))
 	      (fun x ->
 		(* for instance if the conclusion is [even n] and the
 		   inductive is [even n'], we can substitute [n] in the goal with [n']  *)
@@ -184,17 +186,23 @@ let invert h gl =
     in
     cps_mk_letin "diag" diag
       (fun diag -> 
-	let branches = branches diag in 
+	let branches = branches (Term.mkVar diag) in 
 	assert_vector 
 	  (Array.map fst branches)
+	  (
+	    Tacticals.tclTHENLIST 
+	      [Tactics.unfold_constr (Libnames.VarRef diag);
+	       Tactics.clear [diag; h]
+	      ])
 	  (fun vect gl -> 
 	    let env = Tacmach.pf_env gl in
 	    (* extra information for the match *)
 	    let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in 	
+	    let _ = Format.printf "return clause: %a\n" pp_constr (return_clause (Term.mkVar diag)) in 
 	    let term = 
 	      Term.mkCase
 		(case_info, 
-		 return_clause diag, 
+		 return_clause (Term.mkVar diag), 
 		 Term.mkVar h, 
 		 Array.mapi 
 		   (

@@ -31,24 +31,40 @@ Lemma l1 : forall n, even (2 + n) -> even n.
           end); simpl.  
   Restart.
   intros. 
-  intros. invert H. simpl.  constructor. simpl; intros; auto. Show Proof. 
+  invert H. constructor.  intros; auto. Show Proof. 
 Qed. 
-  refine (
-      (fun (n : nat) (H : even (plus (S (S O)) n)) =>
-         let diag :=
-             fun x : nat =>
-               match x return Prop with
-                 | O => even x
-                 | S x0 => match x0 return Prop with
-                            | O => even x0
-                            | S x1 => even x1
-             end
-               end in
-         
-         match H in (even args) return (diag args) with
-           | even_0 => _
-           | even_SS x x0 => _
-         end)).
-  simpl. constructor. 
-  simpl. auto. 
+
+
+Inductive mul3 : nat -> Prop :=
+  | T0 : mul3 0
+  | T3: forall n, mul3 n -> mul3 (3 + n).
+
+Lemma inv_mul_3plusn : forall n, mul3 (3 + n) -> mul3 n.
+Proof.
+intros n m. 
+invert m. constructor. 
+simpl. auto. 
 Qed. 
+
+(* Not in the paper: version without 0 *)
+Lemma inv_mul_3plusn_no0 : forall n, mul3 (3 + n) -> mul3 n.
+Proof.
+intros n m.
+invert m. 
+constructor.
+simpl. auto. 
+Qed.
+
+
+
+Section sec_absu_2ismul3.
+
+Variable C: Prop.
+
+Lemma absurd2_inv : mul3 2 -> C.
+Proof.
+intros H. 
+(* invert H. *)
+Abort. 
+
+End sec_absu_2ismul3.
