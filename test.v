@@ -64,7 +64,7 @@ Variable C: Prop.
 Lemma absurd2_inv : mul3 2 -> C.
 Proof.
 intros H. 
-(* invert H. *)
+invert H.
 Abort. 
 
 End sec_absu_2ismul3.

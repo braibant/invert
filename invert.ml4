@@ -57,7 +57,7 @@ let assert_vector
 let rec diag sigma env t (a: Term.constr) b return  = 
   let tty = Typing.type_of env sigma t in 
   let t = Tacred.hnf_constr env sigma t in 
-  let _ = Format.printf "diag %a %a %a\n" pp_constr t pp_constr a pp_constr b in
+  (* let _ = Format.printf "diag %a %a %a\n" pp_constr t pp_constr a pp_constr b in *)
   mk_fun 
     (Names.id_of_string "x")
     tty 
@@ -140,6 +140,8 @@ let invert h gl =
     let ind_family = Inductiveops.make_ind_family (ind,[]) in 
     let constructors = Inductiveops.get_constructors env ind_family in 
     let diag = diag sigma env t (Term.mkInd ind) (Term.mkInd ind) (Term.mkSort sort) in
+    let _ = Format.printf "diag: %a\n" pp_constr diag in 
+
     let branches diag = 
       Array.map 
 	(fun c ->       
@@ -149,14 +151,14 @@ let invert h gl =
 	      (Term.mkApp (diag, c.Inductiveops.cs_concl_realargs))
 	      ctx
 	  in 
-	  let _ = Format.printf "concl-ty: %a\n" pp_constr concl_ty in 
+	  (* let _ = Format.printf "concl-ty: %a\n" pp_constr concl_ty in  *)
 	  let body subgoal = 
 	    let x =
 	      Namegen.it_mkLambda_or_LetIn_name env 
 		(Term.mkApp (subgoal, Termops.extended_rel_vect 0 ctx))
 		ctx
 	    in 
-	    Format.printf "subgoal: %a\n" pp_constr x;
+	    (* Format.printf "subgoal: %a\n" pp_constr x; *)
 	    x
 	  (* Termops.it_mkLambda_or_LetIn  *)
 	  (* (Term.mkCast (subgoal, Term.DEFAULTcast, concl_ty)) *)
@@ -198,7 +200,6 @@ let invert h gl =
 	    let env = Tacmach.pf_env gl in
 	    (* extra information for the match *)
 	    let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in 	
-	    let _ = Format.printf "return clause: %a\n" pp_constr (return_clause (Term.mkVar diag)) in 
 	    let term = 
 	      Term.mkCase
 		(case_info, 
