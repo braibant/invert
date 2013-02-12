@@ -1,3 +1,5 @@
+open Util
+
 let pp_constr fmt x = Pp.pp_with fmt (Printer.pr_constr x)
 let pp_list pp fmt l = List.iter (fun x -> Format.fprintf fmt "%a; " pp x) l
 let pp_list_nl pp fmt l = List.iter (fun x -> Format.fprintf fmt "%a;\n" pp x) l
@@ -50,6 +52,27 @@ let assert_vector
 			       aux (succ i) (name :: l)] goal
   in
   aux 0 []
+
+(** [make_a_pattern env sigma (C_i (C_j x) u)]
+    @returns [(Some (i, [Some (j, [None]); None]), [Inl x; Inr u])]
+*)
+let make_a_pattern env sigma t =
+  let rec aux t vars =
+  let t' = Tacred.hnf_constr env sigma t in
+  match Term.kind_of_term t' with
+  | Term.Var v -> (None, (Inl v) :: vars)
+  | Term.App (hd, tl) ->
+    (match Term.kind_of_term hd with
+    | Term.Construct (_, i) ->
+      let (constrs,leafs) =
+	Array.fold_map' aux tl vars in
+      (Some (i,constrs), leafs)
+    | _ -> (None, (Inr t) :: vars))
+  | _ -> (None, (Inr t) :: vars)
+  in
+  let (a, b) = aux t [] in
+  (a, List.rev b)
+
 
 (* constructs the term fun x => match x with | t => a | _ => b end *)
 let rec diag sigma env t (a: Term.constr) b return  =
