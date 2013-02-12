@@ -9,7 +9,7 @@ let mk_fun
     (k : Names.identifier -> Term.constr) =
   Term.mkNamedLambda name t (Term.subst_vars [name] (k name))
 
-let mk_let  
+let mk_let
     (name:Names.identifier)
     (c: Term.constr)
     (t: Term.constr)
@@ -32,90 +32,88 @@ let cps_mk_letin
     let letin = (Tactics.letin_tac None  (Names.Name name) c None nowhere) in
     Tacticals.tclTHEN letin (k name) goal
 
-    
-let assert_vector 
+let assert_vector
     (c: Term.constr array) 		(* vector of the types of each sub-goal *)
     subtac
     (k : Names.identifier array -> Proof_type.tactic)
-    : Proof_type.tactic = 
-  let rec aux i l = 
-    if i = Array.length c 
+    : Proof_type.tactic =
+  let rec aux i l =
+    if i = Array.length c
     then k (Array.of_list (List.rev l))
-    else 
-      fun goal -> 
+    else
+      fun goal ->
 	let name = (Names.id_of_string "invert") in
 	let name =  Tactics.fresh_id [] name goal in
 	let t = (Tactics.assert_tac  (Names.Name name) c.(i)) in
-	let _ = Format.printf "subgoal %i: %a\n" i pp_constr c.(i) in 
-	Tacticals.tclTHENS t [ Tacticals.tclTHEN (Tactics.clear l) subtac; 
+	let _ = Format.printf "subgoal %i: %a\n" i pp_constr c.(i) in
+	Tacticals.tclTHENS t [ Tacticals.tclTHEN (Tactics.clear l) subtac;
 			       aux (succ i) (name :: l)] goal
   in
   aux 0 []
 
-(* constructs the term fun x => match x with | t => a | _ => b end
-   assume that t is in head normal form *)
-let rec diag sigma env t (a: Term.constr) b return  = 
-  let tty = Typing.type_of env sigma t in 
-  let t = Tacred.hnf_constr env sigma t in 
+(* constructs the term fun x => match x with | t => a | _ => b end *)
+let rec diag sigma env t (a: Term.constr) b return  =
+  let tty = Typing.type_of env sigma t in
+  let t = Tacred.hnf_constr env sigma t in
   (* let _ = Format.printf "diag %a %a %a\n" pp_constr t pp_constr a pp_constr b in *)
-  mk_fun 
+  mk_fun
     (Names.id_of_string "x")
-    tty 
-    (fun x -> 
-      let (ind, args) = Inductive.find_inductive env tty in 
-      let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in 
+    tty
+    (fun x ->
+      let (ind, args) = Inductive.find_inductive env tty in
+      let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in
       (* the type of each constructor *)
-      let (branches_type: Term.types array) = Inductiveops.arities_of_constructors env ind in       
+      let (branches_type: Term.types array) = Inductiveops.arities_of_constructors env ind in
       try
 	let head_t, args_t =
-	  match Term.kind_of_term t with 
-	  | Term.App(hd, v) -> 
-	    (match Term.kind_of_term hd with 
-	    | Term.Construct c' -> c',v      
+	  match Term.kind_of_term t with
+	  | Term.App(hd, v) ->
+	    (match Term.kind_of_term hd with
+	    | Term.Construct c' -> c',v
 	    )
 	  | Term.Construct c' -> c', [||]
-	in 
-	let branches = Array.mapi 
-	  (fun i ty -> 
+	in
+	let branches = Array.mapi
+	  (fun i ty ->
 	    let (args_ty,concl_ty) = Term.decompose_prod_assum ty in
-	    let args_ty' = List.rev args_ty in 
-	    if i + 1 = snd head_t 
-	    then 
+	    let args_ty' = List.rev args_ty in
+	    if i + 1 = snd head_t
+	    then
 	      (* in this case, we continue to match on [t] *)
-	      begin 
-		let env = (Environ.push_rel_context args_ty env) in 
+	      begin
+		let env = (Environ.push_rel_context args_ty env) in
 		(* we must match each of the arguments of the constructor
 		   against the corresponding term in the arguments of t *)
-		let rec aux k : Term.constr= 
-		  if k = Array.length args_t 
-		  then 
+		let rec aux k : Term.constr=
+		  if k = Array.length args_t
+		  then
 		    a
 		  else
-		    diag sigma env 
-		      args_t.(k) 
-		      (aux (succ k)) 
+		    diag sigma env
+		      args_t.(k)
+		      (aux (succ k))
 		      b
 		      return
-		in 
-		aux 0	      
+		in
+		aux 0
 	      end
-	    else 
+	    else
 	      (* otherwise, in the underscore case, we return [b] *)
-	      Termops.it_mkLambda_or_LetIn (Term.mkApp (b, [| Term.mkVar x |])) args_ty	 	    
-	  ) 
+	      Termops.it_mkLambda_or_LetIn (Term.mkApp (b, [| Term.mkVar x |])) args_ty
+	  )
 	  branches_type
 	in
-	let return = 
-	  let context = 
-	    (Names.Anonymous, None, tty) :: 
+	let return =
+	  let context =
+	    (Names.Anonymous, None, tty) ::
 	      List.map (fun t -> Names.Anonymous, None, Typing.type_of env sigma t) (List.rev args)
-	  in 
-	  Termops.it_mkLambda_or_LetIn 
+	  in
+	  Termops.it_mkLambda_or_LetIn
 	    (
 	      return
-	    ) context	  
-	in Term.mkCase (case_info,return,Term.mkVar x, branches) 
-      with 
+	    ) context
+	in Term.mkCase (case_info,return,Term.mkVar x, branches)
+      with
       | _ -> Term.mkApp (a, [|Term.mkVar x|])
     )
 ;;
