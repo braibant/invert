@@ -17,8 +17,8 @@ let mk_let
   Term.mkNamedLetIn name c t (Term.subst_vars [name] (k name))
 
 let nowhere =
-  { Tacexpr.onhyps = Some [];
-    Tacexpr.concl_occs = Glob_term.no_occurrences_expr
+  { Locus.onhyps = Some [];
+    Locus.concl_occs = Locus.NoOccurrences
   }
 
 let cps_mk_letin
@@ -74,21 +74,21 @@ let make_a_pattern env sigma t : split_tree list * split_tree_leave list =
     let t' = Tacred.hnf_constr env sigma t in
     let (hd,tl) = Term.decompose_app t' in
     match Term.kind_of_term hd with
-    | Term.Var v when tl = [] -> (None, (LVar v) :: vars)
+    | Term.Var v when CList.is_empty tl -> (None, (LVar v) :: vars)
     | Term.Construct (ind, i) ->
-      let real_args = Util.list_skipn (fst (Inductiveops.inductive_nargs env ind)) tl in
+      let real_args = CList.skipn (Inductiveops.inductive_nparams ind) tl in
       let (constrs,leafs) =
-	Util.list_fold_map' aux real_args vars in
+	CList.fold_map' aux real_args vars in
       (Some (ind, i,constrs), leafs)
     | _ -> (None, (LTerm t) :: vars)
   in
   try
     let (hd,tl) = Term.decompose_app t in
     let ind = Term.destInd hd in
-    let real_args = Util.list_skipn (fst (Inductiveops.inductive_nargs env ind)) tl in
-    let (a, b) = Util.list_fold_map' aux real_args [] in
+    let real_args = CList.skipn (Inductiveops.inductive_nparams ind) tl in
+    let (a, b) = CList.fold_map' aux real_args [] in
     (a, List.rev b)
-  with Invalid_argument _ -> Util.error ("make_a_pattern: not an inductive")
+  with Invalid_argument _ -> Errors.error ("make_a_pattern: not an inductive")
 
 let diag sigma env hyp = 
   let rec build sigma env x split_tree term = 
@@ -141,7 +141,6 @@ let diag sigma env hyp =
   let (split_tree, leaves) = make_a_pattern env sigma hyp in 
   build sigma env x split_tree 
       
-
 
   (* constructs the term fun x => match x with | t => a | _ => b end *)
 let rec diag sigma env t (a: Term.constr) b return  =
@@ -286,7 +285,7 @@ let invert h gl =
 	  (Array.map fst branches)
 	  (
 	    Tacticals.tclTHENLIST 
-	      [Tactics.unfold_constr (Libnames.VarRef diag);
+	      [Tactics.unfold_constr (Globnames.VarRef diag);
 	       Tactics.clear [diag; h]
 	      ])
 	  (fun vect gl -> 
