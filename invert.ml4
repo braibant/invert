@@ -1,5 +1,3 @@
-open Util
-
 let pp_constr fmt x = Pp.pp_with fmt (Printer.pr_constr x)
 let pp_list pp fmt l = List.iter (fun x -> Format.fprintf fmt "%a; " pp x) l
 let pp_list_nl pp fmt l = List.iter (fun x -> Format.fprintf fmt "%a;\n" pp x) l
@@ -53,26 +51,29 @@ let assert_vector
   in
   aux 0 []
 
-(** [make_a_pattern env sigma (C_i (C_j x) u)]
-    @returns [(Some (i, [Some (j, [None]); None]), [Inl x; Inr u])]
+(** [make_a_pattern env sigma (I params (C_i (C_j x) u))]
+    @returns [[(Some (i, [Some (j, [None]); None]), [Inl x; Inr u])]]
 *)
 let make_a_pattern env sigma t =
   let rec aux t vars =
-  let t' = Tacred.hnf_constr env sigma t in
-  match Term.kind_of_term t' with
-  | Term.Var v -> (None, (Inl v) :: vars)
-  | Term.App (hd, tl) ->
-    (match Term.kind_of_term hd with
-    | Term.Construct (_, i) ->
+    let t' = Tacred.hnf_constr env sigma t in
+    let (hd,tl) = Term.decompose_app t' in
+    match Term.kind_of_term hd with
+    | Term.Var v when CList.is_empty tl -> (None, (Util.Inl v) :: vars)
+    | Term.Construct (ind, i) ->
+      let real_args = CList.skipn (Inductiveops.inductive_nparams ind) tl in
       let (constrs,leafs) =
-	Array.fold_map' aux tl vars in
+	CList.fold_map' aux real_args vars in
       (Some (i,constrs), leafs)
-    | _ -> (None, (Inr t) :: vars))
-  | _ -> (None, (Inr t) :: vars)
+    | _ -> (None, (Util.Inr t) :: vars)
   in
-  let (a, b) = aux t [] in
-  (a, List.rev b)
-
+  try
+    let (hd,tl) = Term.decompose_app t in
+    let ind = Term.destInd hd in
+    let real_args = CList.skipn (Inductiveops.inductive_nparams ind) tl in
+    let (a, b) = CList.fold_map' aux real_args [] in
+    (a, List.rev b)
+  with Invalid_argument _ -> Errors.error ("t'es con, c'est pas un inductif")
 
 (* constructs the term fun x => match x with | t => a | _ => b end *)
 let rec diag sigma env t (a: Term.constr) b return  =
