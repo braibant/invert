@@ -59,21 +59,21 @@ let make_a_pattern env sigma t =
     let t' = Tacred.hnf_constr env sigma t in
     let (hd,tl) = Term.decompose_app t' in
     match Term.kind_of_term hd with
-    | Term.Var v when CList.is_empty tl -> (None, (Util.Inl v) :: vars)
+    | Term.Var v when tl = [] -> (None, (Util.Inl v) :: vars)
     | Term.Construct (ind, i) ->
-      let real_args = CList.skipn (Inductiveops.inductive_nparams ind) tl in
+      let real_args = Util.list_skipn (fst (Inductiveops.inductive_nargs env ind)) tl in
       let (constrs,leafs) =
-	CList.fold_map' aux real_args vars in
+	Util.list_fold_map' aux real_args vars in
       (Some (i,constrs), leafs)
     | _ -> (None, (Util.Inr t) :: vars)
   in
   try
     let (hd,tl) = Term.decompose_app t in
     let ind = Term.destInd hd in
-    let real_args = CList.skipn (Inductiveops.inductive_nparams ind) tl in
-    let (a, b) = CList.fold_map' aux real_args [] in
+    let real_args = Util.list_skipn (fst (Inductiveops.inductive_nargs env ind)) tl in
+    let (a, b) = Util.list_fold_map' aux real_args [] in
     (a, List.rev b)
-  with Invalid_argument _ -> Errors.error ("t'es con, c'est pas un inductif")
+  with Invalid_argument _ -> Util.error ("t'es con, c'est pas un inductif")
 
 (* constructs the term fun x => match x with | t => a | _ => b end *)
 let rec diag sigma env t (a: Term.constr) b return  =
