@@ -51,21 +51,36 @@ let assert_vector
   in
   aux 0 []
 
-(** [make_a_pattern env sigma (I params (C_i (C_j x) u))]
-    @returns [[(Some (i, [Some (j, [None]); None]), [Inl x; Inr u])]]
+type split_tree = ((Names.inductive * int * 'a list) option as 'a)
+type split_tree_leave = 
+  | LVar of Names.identifier
+  | LTerm of Term.constr
+
+ 
+(** [make_a_pattern env sigma t] decomposes the term [t] in a
+   split_tree (the constructor spine that underlies this term), and
+   the leaves of this split_tree (either variables or terms).
+   
+   [make_a_pattern env sigma (I params (C_i (C_j x) u))] 
+   @returns [[(Some (i, [Some (j, [None]); None]), [Inl x; Inr u])]]
+   
+   The left part of the result corresponds to the spine of the term
+   [t], and the right part corresponds to the arguments of this
+   spine. Note that the spine is actually a list of split trees, since
+   the inductive may have several arguments. 
 *)
-let make_a_pattern env sigma t =
+let make_a_pattern env sigma t : split_tree list * split_tree_leave list =
   let rec aux t vars =
     let t' = Tacred.hnf_constr env sigma t in
     let (hd,tl) = Term.decompose_app t' in
     match Term.kind_of_term hd with
-    | Term.Var v when tl = [] -> (None, (Util.Inl v) :: vars)
+    | Term.Var v when tl = [] -> (None, (LVar v) :: vars)
     | Term.Construct (ind, i) ->
       let real_args = Util.list_skipn (fst (Inductiveops.inductive_nargs env ind)) tl in
       let (constrs,leafs) =
 	Util.list_fold_map' aux real_args vars in
-      (Some (i,constrs), leafs)
-    | _ -> (None, (Util.Inr t) :: vars)
+      (Some (ind, i,constrs), leafs)
+    | _ -> (None, (LTerm t) :: vars)
   in
   try
     let (hd,tl) = Term.decompose_app t in
@@ -73,9 +88,62 @@ let make_a_pattern env sigma t =
     let real_args = Util.list_skipn (fst (Inductiveops.inductive_nargs env ind)) tl in
     let (a, b) = Util.list_fold_map' aux real_args [] in
     (a, List.rev b)
-  with Invalid_argument _ -> Util.error ("t'es con, c'est pas un inductif")
+  with Invalid_argument _ -> Util.error ("make_a_pattern: not an inductive")
 
-(* constructs the term fun x => match x with | t => a | _ => b end *)
+let diag sigma env hyp = 
+  let rec build sigma env x split_tree term = 
+    match split_tree with 
+    | None -> term 
+    | Some (ind, ci, split_trees) -> 
+      let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in
+      (* the type of each constructor *)
+      let (branches_type: Term.types array) = Inductiveops.arities_of_constructors env ind in
+      let branches = 
+	Array.mapi
+	  (fun i ty ->
+	    let (args_ty,concl_ty) = Term.decompose_prod_assum ty in
+	    let args_ty' = List.rev args_ty in
+	    if i + 1 = ci
+	    then
+	      (* in this case, we continue to match on [t] *)
+	      begin
+		let env = (Environ.push_rel_context args_ty env) in
+		(* we must match each of the arguments of the constructor
+		   against the corresponding term in the arguments of [t] *)
+		let rec aux c_args split_trees = 
+		  match c_args,split_trees with 
+		  | [],[] -> assert (ignore "forall X, X"; false); Term.mkRel 1
+		  | hd1::tl1, hd2 :: tl2 -> 
+		    build sigma env hd1 hd2 (aux tl1 tl2)
+		  | _, _ -> assert false
+		in 
+		aux args_ty' split_trees
+	      end
+	    else
+              (* otherwise, in the underscore case, we return [True] *)
+	      Util.delayed_force Coqlib.build_coq_True 
+	  )
+	  branches_type
+      in
+      (* the return clause has the following shape : [fun args x ->
+	 return clause] where args are the arguments of the inductive
+	 and [x] is the as clause. *)
+      let tty = Typing.type_of env sigma x in
+      let (ind, args) = Inductive.find_inductive env tty in
+      let return =
+	let context =
+	  (Names.Anonymous, None, tty) ::
+	    List.map (fun t -> Names.Anonymous, None, Typing.type_of env sigma t) (List.rev args)
+	in
+	Termops.it_mkLambda_or_LetIn Term.mkProp context
+      in Term.mkCase (case_info,return,x, branches)
+  in
+  let (split_tree, leaves) = make_a_pattern env sigma hyp in 
+  build sigma env x split_tree 
+      
+
+
+  (* constructs the term fun x => match x with | t => a | _ => b end *)
 let rec diag sigma env t (a: Term.constr) b return  =
   let tty = Typing.type_of env sigma t in
   let t = Tacred.hnf_constr env sigma t in
@@ -98,34 +166,34 @@ let rec diag sigma env t (a: Term.constr) b return  =
 	  | Term.Construct c' -> c', [||]
 	in
 	let branches = Array.mapi
-	  (fun i ty ->
-	    let (args_ty,concl_ty) = Term.decompose_prod_assum ty in
-	    let args_ty' = List.rev args_ty in
-	    if i + 1 = snd head_t
-	    then
-	      (* in this case, we continue to match on [t] *)
-	      begin
-		let env = (Environ.push_rel_context args_ty env) in
-		(* we must match each of the arguments of the constructor
-		   against the corresponding term in the arguments of t *)
-		let rec aux k : Term.constr=
-		  if k = Array.length args_t
-		  then
-		    a
-		  else
-		    diag sigma env
-		      args_t.(k)
-		      (aux (succ k))
-		      b
-		      return
-		in
-		aux 0
-	      end
-	    else
-	      (* otherwise, in the underscore case, we return [b] *)
-	      Termops.it_mkLambda_or_LetIn (Term.mkApp (b, [| Term.mkVar x |])) args_ty
-	  )
-	  branches_type
+	    (fun i ty ->
+	      let (args_ty,concl_ty) = Term.decompose_prod_assum ty in
+	      let args_ty' = List.rev args_ty in
+	      if i + 1 = snd head_t
+	      then
+		(* in this case, we continue to match on [t] *)
+		begin
+		  let env = (Environ.push_rel_context args_ty env) in
+		  (* we must match each of the arguments of the constructor
+		     against the corresponding term in the arguments of t *)
+		  let rec aux k : Term.constr=
+		    if k = Array.length args_t
+		    then
+		      a
+		    else
+		      diag sigma env
+			args_t.(k)
+			(aux (succ k))
+			b
+			return
+		  in
+		  aux 0
+		end
+	      else
+		(* otherwise, in the underscore case, we return [b] *)
+		Termops.it_mkLambda_or_LetIn (Term.mkApp (b, [| Term.mkVar x |])) args_ty
+	    )
+	    branches_type
 	in
 	let return =
 	  let context =
@@ -153,6 +221,9 @@ let invert h gl =
   let (!!) x = Tactics.fresh_id [] ((Names.id_of_string x)) gl in  
   
   (* get the name of the inductive and the list of arguments it is applied to *)
+  let (st,leaves) = make_a_pattern env sigma h_ty in 
+  List.iter (function LVar v -> Format.printf "variable %a" pp_constr (Term.mkVar v)
+		    | LTerm t -> Format.printf "term %a" pp_constr t) leaves;
   let (ind, constr_list) = Inductive.find_inductive env h_ty in 
   
   begin match constr_list with 
