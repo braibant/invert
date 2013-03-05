@@ -31,7 +31,9 @@ Lemma l1 : forall n, even (2 + n) -> even n.
           end); simpl.  
   Restart.
   intros. 
-  invert H. constructor.  intros; auto. Show Proof. 
+  
+  invert H. simpl. auto. simpl. auto.
+ Show Proof. 
 Qed. 
 
 
@@ -59,32 +61,10 @@ Section sec_absu_2ismul3.
 Variable C: Prop.
 Lemma absurd2_inv : mul3 2 -> C.
 Proof.
-set (diag := fun x => 
-               match x  with 
-                   | 0 => True
-                   | 1 => True
-                   | 2 => forall (X: Prop), X
-                   | S (S (S n)) => True
-               end). 
-intros H. 
-refine ((match H in mul3 k return diag k with | T0 => _ | T3 p H => _ end) _).
-simpl. auto. 
-simpl. auto. Show Proof. 
-Restart. 
-intros. 
-set (diag := fun x => 
-               match x  with 
-                   | 0 => mul3 2
-                   | 1 => mul3 2
-                   | 2 => C
-                   | S (S (S n)) => mul3 2
-               end). 
-refine ((match H in mul3 k return diag k with | T0 => _ | T3 p H => _ end)). simpl. auto. simpl. auto. 
- Restart. 
-intros. 
-Fail invert H. 
-Abort. 
-
+intros H.
+invert H; simpl; intros; auto.
+Show Proof.
+Qed.  
 End sec_absu_2ismul3.
 
 
@@ -108,7 +88,8 @@ Goal forall v, eval (plus (const 0) (const 1)) (nval v) ->
           v = 1. 
 
 intros. 
-invert H. 
+invert H. auto.
+simpl.  
 set (diag := fun t (v1: val) => match t with 
                          | const _ => v = 1
                          | plus t1 t2 => forall (X: Prop), X

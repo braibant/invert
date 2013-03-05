@@ -140,7 +140,6 @@ let diag env sigma leaf_ids split_trees (concl: Term.constr) concl_sort  =
       build_diag env substitution identifier_list ll
     | (k,head :: q)::ll ->
       let _ = Format.eprintf "k = %i " k in
-
       let remaining_splits = (k,q)::ll in
       let to_lift = CList.length q in
       let head_tm = Term.mkRel (to_lift + k) in
@@ -181,7 +180,13 @@ let diag env sigma leaf_ids split_trees (concl: Term.constr) concl_sort  =
 	    )
 	    branches_type
 	in
-	Term.mkCase (case_info,Term.mkSort concl_sort,head_tm,branches)
+	let ind_family = Inductiveops.make_ind_family (ind, params) in
+	let this_return_clause =
+	  Term.it_mkLambda_or_LetIn
+	    (Term.mkSort concl_sort)
+	    (Inductiveops.make_arity_signature env true ind_family)
+	in 
+	Term.mkCase (case_info,this_return_clause,head_tm,branches)
       | None -> match identifier_list with
 	| [] ->
 	  Errors.anomaly (Pp.str "build_diag: Less variable than split_tree leaf")
@@ -268,16 +273,20 @@ let invert h gl =
 	  (* extra information for the match *)
 	  let ind = fst (Inductiveops.dest_ind_family  ind_family) in
 	  let case_info = Inductiveops.make_case_info env ind  Term.RegularStyle in
-	  Format.printf "foofbar\n%!";
+	  let return_clause =
+	    let ctx = (Inductiveops.make_arity_signature env true ind_family) in
+	    Term.it_mkLambda_or_LetIn
+	      (Term.mkApp (Term.mkVar diag, Termops.extended_rel_vect 0 ctx))
+	      ctx
+	  in
 	  let term =
 	    Term.mkCase
 	      (case_info,
-	       Term.mkVar diag,
+	       return_clause,
 	       Term.mkVar h,
 	       Array.mapi
 		 (
 		   fun i (_,t) ->
-		     Format.printf "zob %i: %a\n%!" i pp_id vect.(i);
 		     (t (Term.mkVar vect.(i)))
 		 ) branches
 	      )
