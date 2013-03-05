@@ -1,4 +1,6 @@
 let pp_constr fmt x = Pp.pp_with fmt (Printer.pr_constr x)
+let pp_gl fmt x = Pp.pp_with fmt (Printer.pr_goal x)
+let pp_id fmt x = Pp.pp_with fmt (Names.Id.print x)
 let pp_list pp fmt l = List.iter (fun x -> Format.fprintf fmt "%a; " pp x) l
 let pp_list_nl pp fmt l = List.iter (fun x -> Format.fprintf fmt "%a;\n" pp x) l
 let pp_constrs fmt l = (pp_list pp_constr) fmt l
@@ -30,6 +32,7 @@ let cps_mk_letin
     let name = (Names.id_of_string name) in
     let name =  Tactics.fresh_id [] name goal in
     let letin = (Tactics.letin_tac None  (Names.Name name) c None nowhere) in
+    (* let k _ = Tacticals.tclIDTAC  in  *)
     Tacticals.tclTHEN letin (k name) goal
 
 let assert_vector
@@ -44,10 +47,11 @@ let assert_vector
       fun goal ->
 	let name = (Names.id_of_string "invert") in
 	let name =  Tactics.fresh_id [] name goal in
+	let _ = Format.printf "assert vector subgoal %i: %a\n%!" i pp_constr c.(i) in
 	let t = (Tactics.assert_tac  (Names.Name name) c.(i)) in
-	let _ = Format.printf "subgoal %i: %a\n" i pp_constr c.(i) in
-	Tacticals.tclTHENS t [ Tacticals.tclTHEN (Tactics.clear l) subtac;
-			       aux (succ i) (name :: l)] goal
+	Tacticals.tclTHENS t
+	  [  Tacticals.tclTHEN (Tactics.clear l) subtac;
+	    aux (succ i) (name :: l)] goal
   in
   aux 0 []
 
@@ -87,7 +91,7 @@ let make_a_pattern env sigma args : split_tree list * split_tree_leave list =
     | _ -> (None, (LTerm t) :: vars)
   in
     let (a, b) = CList.fold_map' aux args [] in
-    (a, List.rev b)
+    (a, b)
 
 (** From the split_tree_leave list, we build an identifier list by generating
     variables y_s for the LTerm t_s.
@@ -116,68 +120,74 @@ let diag env sigma leaf_ids split_trees (concl: Term.constr) concl_sort  =
       - a list of (int (* = to_lift *) * split_tree list)
       - a association list identifier -> deBruijn indice
   *)
-  let rec build_diag env substitution identifier_list = function
-  (* BUGS:
-   * deal with letins in constructor args telescope
-   * deal with type dependency between split trees
-   * one day, do not do useless destruct: for I : forall n, Fin.t n ->
-   * foo, it is useless to destruct (S m) if we have I (S m) (Fin.F1)
-   *)
+  let rec build_diag env substitution identifier_list
+      (stl : (int (* = to_lift *) * split_tree list) list) =
+    match stl with
+    (* BUGS:
+     * deal with letins in constructor args telescope
+     * deal with type dependency between split trees
+     * one day, do not do useless destruct: for I : forall n, Fin.t n ->
+     * foo, it is useless to destruct (S m) if we have I (S m) (Fin.F1)
+     *)
     | [] -> (* Not dependent inductive *)
       assert (CList.is_empty identifier_list && CList.is_empty substitution);
       concl
-    | (k,l)::ll -> match l with
-      | [] -> if CList.is_empty ll then
-	  let () = assert (CList.is_empty identifier_list) in
-	  Term.replace_vars substitution (Term.lift k concl)
-	else
-	  build_diag env substitution identifier_list ll
-      | head :: q ->
-	let remaining_splits = (k,q)::ll in
-	let to_lift = CList.length q in
-	let head_tm = Term.mkRel (to_lift + k) in
-	match head with
-	| Some (ind, constructor, params, split_trees) ->
-	  let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in
-	(* the type of each constructor *)
-	  let (branches_type: Term.types array) =
-	    Inductiveops.arities_of_constructors env ind in
-	  let lift_subst =
-	    List.map (fun (id, tm) -> (id, Term.lift to_lift tm)) substitution in
-	  let lift_splits =
-	    List.map (fun (k', st) -> (to_lift + k', st)) remaining_splits in
-	  let branches =
-	    Array.mapi
-	      (fun i ty ->
-		let ty_with_concrete_params =
-		  Term.prod_applist ty params in
-		let (args_ty,concl_ty) =
-		  Term.decompose_prod_assum ty_with_concrete_params in
-		let branch_body =
-		  if i + 1 = constructor
-		  then
+    | (k,[])::ll when CList.is_empty ll ->
+      let () = assert (CList.is_empty identifier_list) in
+      let _ = List.iter (fun (id,t) -> Format.eprintf "%a => %a" pp_id id pp_constr t) substitution in
+      Term.replace_vars substitution (Term.lift k concl)
+    | (k,[])::ll ->
+      build_diag env substitution identifier_list ll
+    | (k,head :: q)::ll ->
+      let _ = Format.eprintf "k = %i " k in
+
+      let remaining_splits = (k,q)::ll in
+      let to_lift = CList.length q in
+      let head_tm = Term.mkRel (to_lift + k) in
+      match head with
+      | Some (ind, constructor, params, split_trees) ->
+	let _ = Format.eprintf "C = %a, " pp_constr (Term.mkConstruct (ind,constructor)) in
+	let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in
+	  (* the type of each constructor *)
+	let (branches_type: Term.types array) =
+	  Inductiveops.arities_of_constructors env ind in
+	let lift_subst =
+	  List.map (fun (id, tm) -> (id, Term.lift (List.length split_trees) tm)) substitution in
+	let lift_splits =
+	  List.map (fun (k', st) -> (List.length split_trees + k', st)) remaining_splits in
+	let branches =
+	  Array.mapi
+	    (fun i ty ->
+	      let ty_with_concrete_params =
+		Term.prod_applist ty params in
+	      let (args_ty,concl_ty) =
+		Term.decompose_prod_assum ty_with_concrete_params in
+	      let branch_body =
+		if i + 1 = constructor
+		then
 		    (* in this case, we continue to match *)
-		    let env' = (Environ.push_rel_context args_ty env) in
-		    build_diag env' lift_subst identifier_list
-		      ((1,split_trees)::lift_splits)
-		  else
+		  let env' = (Environ.push_rel_context args_ty env) in
+		  build_diag env' lift_subst identifier_list
+		    ((1,split_trees)::lift_splits)
+		else
 		    (* otherwise, in the underscore case,
 		       we return [False -> True] *)
-		    Term.mkProd
-		      (Names.Anonymous,
-		       Util.delayed_force Coqlib.build_coq_False,
-		       Util.delayed_force Coqlib.build_coq_True)
-		in
-		Term.it_mkLambda_or_LetIn branch_body args_ty
-	      )
-	      branches_type
-	  in
-	  Term.mkCase (case_info,Term.mkSort concl_sort,head_tm,branches)
-	| None -> match identifier_list with
-	  | [] ->
-	    Errors.anomaly (Pp.str "build_diag: Less variable than split_tree leaf")
-	  |id_h :: id_q ->
-	    build_diag env ((id_h, head_tm):: substitution) id_q remaining_splits
+		  Term.mkProd
+		    (Names.Anonymous,
+		     Util.delayed_force Coqlib.build_coq_False,
+		     Util.delayed_force Coqlib.build_coq_True)
+	      in
+	      Term.it_mkLambda_or_LetIn branch_body args_ty
+	    )
+	    branches_type
+	in
+	Term.mkCase (case_info,Term.mkSort concl_sort,head_tm,branches)
+      | None -> match identifier_list with
+	| [] ->
+	  Errors.anomaly (Pp.str "build_diag: Less variable than split_tree leaf")
+	|id_h :: id_q ->
+	  let _ = Format.eprintf "%a = %a, " pp_id id_h pp_constr head_tm in
+	  build_diag env ((id_h, head_tm):: substitution) id_q remaining_splits
   in build_diag env [] leaf_ids [(1,split_trees)]
 
 let invert h gl =
@@ -187,7 +197,6 @@ let invert h gl =
 
   (** ensures that the name x is fresh in the _first_ goal *)
   let (!!) x = Tactics.fresh_id [] ((Names.id_of_string x)) gl in
-  try
   (* get the name of the inductive and the list of arguments it is applied to *)
   let (ind_family, real_args) =
     Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma h_ty) in
@@ -195,7 +204,7 @@ let invert h gl =
   let constructors = Inductiveops.get_constructors env ind_family in
 
   let (split_trees,leaves) =
-    make_a_pattern env sigma (real_args @ [Term.mkVar (!! "as_x")]) in
+    make_a_pattern env sigma (real_args @ [Term.mkVar h]) in
   List.iter (function
   | LVar v -> Format.printf "variable %a" pp_constr (Term.mkVar v)
   | LTerm t -> Format.printf "term %a" pp_constr t) leaves;
@@ -210,82 +219,73 @@ let invert h gl =
 
   let _ = Format.printf "diag: %a\n" pp_constr return_clause in
 
-    let branches diag = 
-      Array.map 
-	(fun c ->       
- 	  let ctx =  c.Inductiveops.cs_args  in 
-	  let concl_ty =
-	    Termops.it_mkProd_or_LetIn 
-	      (Term.mkApp (diag, c.Inductiveops.cs_concl_realargs))
-	      ctx
-	  in 
+  (* cqssons un etage de constructeur de l'inductif *)
+  let branches diag =
+    Array.map
+      (fun c ->
+ 	let ctx =  c.Inductiveops.cs_args  in
+	let concl_ty = Termops.it_mkProd_or_LetIn
+	    (
+	      let t = Term.mkApp (diag, c.Inductiveops.cs_concl_realargs) in
+	      let t = Term.mkApp (t, [| Inductiveops.build_dependent_constructor c |]) in
+	      t
+	    )
+	    ctx
+	in
+	Format.printf "concl: %a\n" pp_constr concl_ty;
+
 	  (* let _ = Format.printf "concl-ty: %a\n" pp_constr concl_ty in  *)
-	  let body subgoal = 
-	    let x =
-	      Namegen.it_mkLambda_or_LetIn_name env 
-		(Term.mkApp (subgoal, Termops.extended_rel_vect 0 ctx))
-		ctx
-	    in 
-	    (* Format.printf "subgoal: %a\n" pp_constr x; *)
-	    x
+	let body subgoal =
+	  let x =
+	    Namegen.it_mkLambda_or_LetIn_name env
+	      (Term.mkApp (subgoal, Termops.extended_rel_vect 0 ctx))
+	      ctx
+	  in
+	  Format.printf "subgoal: %a\n" pp_constr x;
+	  x
 	  (* Termops.it_mkLambda_or_LetIn  *)
 	  (* (Term.mkCast (subgoal, Term.DEFAULTcast, concl_ty)) *)
 	  (*   (Term.mkCast (subgoal, Term.DEFAULTcast,concl_ty)) c.Inductiveops.cs_args *)
-	  in 
-	  (concl_ty, body)
-	)
-	constructors in
-(*    in 
-    let return_clause diag =       
-      begin 	
-	let _ = assert (List.length arity = 1) in	(* for now *)
-	let (_,_,args_ty) = List.hd arity in 
-	(* the [in] part *)
-	mk_fun (!! "args") args_ty
-	  (fun args -> 
-	    (* the [as] part *)
-	    mk_fun (!! "as_x") (Term.mkApp (Term.mkInd ind, [| Term.mkVar args |]))
-	      (fun x ->
-		(* for instance if the conclusion is [even n] and the
-		   inductive is [even n'], we can substitute [n] in the goal with [n']  *)
-		Term.mkApp (diag, [|Term.mkVar args|])
+	in
+	(concl_ty, body)
+      )
+      constructors
+  in
+  cps_mk_letin "diag" return_clause
+    (fun diag ->
+      let branches = branches (Term.mkVar diag) in
+      Format.printf "assert vector\n%!";
+      assert_vector
+	(Array.map fst branches)
+	(
+	  Tacticals.tclTHENLIST
+	    [Tactics.unfold_constr (Globnames.VarRef diag);
+	     Tactics.clear [diag; h]
+	    ])
+	(fun vect gl ->
+	  Format.printf "Final goal %a\n%!" pp_gl gl;
+	  let env = Tacmach.pf_env gl in
+	  (* extra information for the match *)
+	  let ind = fst (Inductiveops.dest_ind_family  ind_family) in
+	  let case_info = Inductiveops.make_case_info env ind  Term.RegularStyle in
+	  Format.printf "foofbar\n%!";
+	  let term =
+	    Term.mkCase
+	      (case_info,
+	       Term.mkVar diag,
+	       Term.mkVar h,
+	       Array.mapi
+		 (
+		   fun i (_,t) ->
+		     Format.printf "zob %i: %a\n%!" i pp_id vect.(i);
+		     (t (Term.mkVar vect.(i)))
+		 ) branches
 	      )
-	  )	
-      end
-
-    in*)(*
-    cps_mk_letin "diag" return_clause
-      (fun diag -> 
-	let branches = branches (Term.mkVar diag) in 
-	assert_vector 
-	  (Array.map fst branches)
-	  (
-	    Tacticals.tclTHENLIST 
-	      [Tactics.unfold_constr (Globnames.VarRef diag);
-	       Tactics.clear [diag; h]
-	      ])
-	  (fun vect gl -> 
-	    let env = Tacmach.pf_env gl in
-	    (* extra information for the match *)
-	    let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in 	
-	    let term = 
-	      Term.mkCase
-		(case_info, 
-		 return_clause (Term.mkVar diag), 
-		 Term.mkVar h, 
-		 Array.mapi 
-		   (
-		     fun i (_,t) -> 
-		       (t (Term.mkVar vect.(i)))
-		   ) branches
-		)
-	    in 
-	    Format.printf "proof term: %a\n" pp_constr term;
-	    Tactics.refine term gl
-	  )
-      ) gl*) Tactics.intro gl(* TODO *)
-  with Not_found -> Errors.error ("not an inductive")
-
+	  in
+	  Format.printf "proof term: %a\n" pp_constr term;
+	  Tactics.refine term gl
+	)
+    ) gl
 
 open Tacmach
 open Tacticals
@@ -294,7 +294,6 @@ open Tacinterp
 open Genarg
 
 
-
 TACTIC EXTEND invert
-| ["invert" ident(h)] ->     [invert h]      
-  END;;
+| ["invert" ident(h)] ->     [invert h]
+END;;
