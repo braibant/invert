@@ -16,3 +16,6 @@ let stripes doc =
 
 let print doc = 
   Printf.printf "%a" run doc 
+
+let eprint doc =
+  Printf.eprintf "%a" run doc

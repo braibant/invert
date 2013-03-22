@@ -27,20 +27,18 @@ module P = struct
       
 end
   
-
-
 let debug = true
 
 let sanity env sigma t = 
   if debug 
   then 
     begin 
-      P.(print (string "Typing:" ^/^ P.constr t));
+      P.(eprint (string "Typing:" ^/^ P.constr t));
       try 
 	let ty = Typing.type_of env sigma t in 
-	P.(print (string "Type:" ^/^ P.constr ty));
+	P.(eprint (string "Type:" ^/^ P.constr ty));
       with e -> 
-	P.(print (string "Unable to type the term"))
+	P.(eprint (string "Unable to type the term"))
     end
 
 
