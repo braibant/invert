@@ -2,12 +2,12 @@ module P = struct
   include Print
 
   (* from a coq pp_command to a Pprint document *)
-  let pp x = Format.ksprintf string "%a" Pp.pp_with x
+  let pp x = string ( Pp.string_of_ppcmds x)
     
   let constr x = pp (Printer.pr_constr x)
-  let goal gl  = pp (Printer.pr_goal x)  
+  let goal gl  = pp (Printer.pr_goal gl)  
   let id  x    = pp (Names.Id.print x)
-  let name x   = function 
+  let name   = function 
     | Names.Anonymous -> string "_"
     | Names.Name x -> id x
       
@@ -26,6 +26,8 @@ module P = struct
       )
       
 end
+  
+
 
 let debug = true
 
@@ -33,12 +35,12 @@ let sanity env sigma t =
   if debug 
   then 
     begin 
-      Format.eprintf "===\nTyping:%a\n%!" (pp_constr) t;
+      P.(print (string "Typing:" ^/^ P.constr t));
       try 
 	let ty = Typing.type_of env sigma t in 
-        Format.eprintf "Type:%a\n%!" (pp_constr) ty
+	P.(print (string "Type:" ^/^ P.constr ty));
       with e -> 
-	Format.eprintf "Unable to type the term!\n"
+	P.(print (string "Unable to type the term"))
     end
 
 
@@ -84,7 +86,7 @@ let assert_vector
       fun goal ->
 	let name = (Names.id_of_string "invert_subgoal") in
 	let name =  Tactics.fresh_id [] name goal in
-	let _ = Format.printf "assert vector subgoal %i: %a\n%!" i pp_constr c.(i) in
+	(* let _ = Format.printf "assert vector subgoal %i: %a\n%!" i pp_constr c.(i) in *)
 	let t = (Tactics.assert_tac  (Names.Name name) c.(i)) in
 	Tacticals.tclTHENS t
 	  [  Tacticals.tclTHEN (Tactics.clear l) subtac;
@@ -244,24 +246,24 @@ let diag env sigma (leaf_ids: Names.Id.t list)
     | [], [] -> (* Not dependent inductive *)
       Format.eprintf "[],[]\n";            
       let () = assert (CList.is_empty identifier_list) in
-      let _ = 
-	Format.eprintf "substitution: ";
-	List.iter (fun (id,t) -> Format.eprintf "%a => %a, " pp_id id pp_constr t) subst;
-	Format.eprintf "\n"
-      in
+      (* let _ =  *)
+      (* 	Format.eprintf "substitution: "; *)
+      (* 	List.iter (fun (id,t) -> Format.eprintf "%a => %a, " pp_id id pp_constr t) subst; *)
+      (* 	Format.eprintf "\n" *)
+      (* in *)
       let term = Term.replace_vars subst (Term.lift shift concl) in 
-      Format.eprintf "return:%a\n" pp_constr term;
+      (* Format.eprintf "return:%a\n" pp_constr term; *)
       term
     | ll, (_,Some _,_)::stt ->      
-      Format.eprintf "Warning: constructor with let_ins in inversion/build_diag.\n";
+      Printf.eprintf "Warning: constructor with let_ins in inversion/build_diag.\n";
       build_diag env subst shift identifier_list stl stt 
     | head::ll, ((name_argx,None,ty_argx) as rel) ::stt ->
       let lift_subst = List.map (fun (id, tm) -> (id, Term.lift 1 tm)) subst in
       begin match head with
       | Some (ind, constructor, params, split_trees) ->
-	Format.eprintf "C = %a, %a : %a\n" pp_constr (Term.mkConstruct (ind,constructor)) 
-	  pp_name name_argx 
-	  pp_constr ty_argx;
+	(* Format.eprintf "C = %a, %a : %a\n" pp_constr (Term.mkConstruct (ind,constructor))  *)
+	(*   pp_name name_argx  *)
+	(*   pp_constr ty_argx; *)
 	begin 
 	  (* The function that is used to build the term in the
 	     matching branch of the case *)
@@ -292,14 +294,14 @@ let diag env sigma (leaf_ids: Names.Id.t list)
 	  if depends_on 1 stt 
 	  then 
 	    begin 
-	      Format.eprintf "dependent branch for %a\n" pp_name name_argx;
+	      (* Format.eprintf "dependent branch for %a\n" pp_name name_argx; *)
 	      let t = Term.mkLambda (name_argx, ty_argx, Term.lift 1 term)
 	      in
 	      (sanity env sigma t; t)
 	    end
 	  else
 	    begin 
-	      Format.eprintf "non-dependent branch\n";	      
+	      (* Format.eprintf "non-dependent branch\n";	       *)
 	      sanity (Environ.push_rel rel env) sigma term; term
 	    end
 
@@ -335,17 +337,14 @@ let invert h gl =
   let (_,sort_family) = Inductiveops.get_arity env ind_family in
   let constructors = Inductiveops.get_constructors env ind_family in
   let (split_trees,leaves) = make_a_pattern env sigma (real_args @ [(* Term.mkVar h *)]) in
-  List.iter (function
-  | LVar v -> Format.eprintf "variable %a\n" pp_constr (Term.mkVar v)
-  | LTerm t -> Format.eprintf "term %a\n" pp_constr t) leaves;
-  Printf.eprintf "\n";
+  (* List.iter (function *)
+  (* | LVar v -> Format.eprintf "variable %a\n" pp_constr (Term.mkVar v) *)
+  (* | LTerm t -> Format.eprintf "term %a\n" pp_constr t) leaves; *)
+  (* Printf.eprintf "\n"; *)
   let (leaves_ids,generalized_hyps,concl) = prepare_conclusion_type gl leaves in
   let return_pred =
-    Format.eprintf "real_ args at this point:%a\n" pp_constrs real_args;
     let rev_ctx = List.rev_map (fun t -> Names.Anonymous, None, Typing.type_of env sigma t) real_args in
     let ctx = List.rev_append rev_ctx [(* Names.Name h, None, h_ty *)] in
-    Format.eprintf "ctx at this point:%a\n" pp_rel_context ctx;
-    Format.eprintf "concl at this point:%a\n" pp_constr concl;
     diag env sigma leaves_ids split_trees ctx  concl (Termops.new_sort_in_family sort_family) in
   let return_clause =
     let args_ty = Inductiveops.make_arity_signature env false ind_family in    
@@ -354,7 +353,7 @@ let invert h gl =
 		    Termops.extended_rel_vect 0 (filter_deps args_ty)))
        (args_ty))
   in
-  let _ = Format.printf "diag: %a\n" pp_constr return_clause in
+  (* let _ = Format.printf "diag: %a\n" pp_constr return_clause in *)
 
   (* Cassons un etage de constructeur de l'inductif *)
   let branches diag =
@@ -393,7 +392,6 @@ let invert h gl =
 	     Tactics.clear [diag; h]
 	    ])
 	(fun vect gl ->
-	  Format.printf "Final goal %a\n%!" pp_gl gl;
 	  let env = Tacmach.pf_env gl in
 	  (* extra information for the match *)
 	  let ind = fst (Inductiveops.dest_ind_family  ind_family) in
@@ -411,7 +409,6 @@ let invert h gl =
 	      (Term.mkApp (Term.mkVar diag, Termops.extended_rel_vect 1 ctx'))
 	      ctx
 	  in
-	  Format.eprintf "return_clause:%a\n" pp_constr return_clause; 
 	  let term =
 	    Term.mkCase
 	      (case_info,
@@ -424,8 +421,18 @@ let invert h gl =
 		 ) branches
 	      )
 	  in
-	  Format.eprintf "proof term: %a\n" pp_constr term;
 	  Tactics.refine term gl
 	)
     ) gl
+
+open Tacmach
+open Tacticals
+open Tacexpr
+open Tacinterp
+open Genarg
+
+
+TACTIC EXTEND invert
+| ["invert" ident(h)] ->     [invert h]
+END;;
 
