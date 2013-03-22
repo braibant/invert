@@ -31,7 +31,6 @@ Lemma l1 : forall n, even (2 + n) -> even n.
           end); simpl.  
   Restart.
   intros. 
-  Set Printing All. 
   invert H. simpl. auto. simpl. auto.
  Show Proof. 
 Qed. 

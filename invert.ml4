@@ -71,7 +71,7 @@ let assert_vector
     then k (Array.of_list (List.rev l))
     else
       fun goal ->
-	let name = (Names.id_of_string "invert") in
+	let name = (Names.id_of_string "invert_subgoal") in
 	let name =  Tactics.fresh_id [] name goal in
 	let _ = Format.printf "assert vector subgoal %i: %a\n%!" i pp_constr c.(i) in
 	let t = (Tactics.assert_tac  (Names.Name name) c.(i)) in
@@ -131,10 +131,10 @@ let make_a_pattern env sigma args : split_tree list * split_tree_leaf list =
 *)
 let prepare_conclusion_type gl leaves =
   let vars = List.map (function LVar x -> x) leaves in 
-  let concl = (Tacmach.pf_concl gl) in
-    (vars,
+  let concl = Tacmach.pf_concl gl in
+  (vars,
    [||],
-  concl)
+   concl)
 
 
 let devil =
@@ -170,20 +170,6 @@ let mk_match env sigma ind constructor params term return_clause kt kf =
   let t = Term.mkCase (case_info,return_clause,term,branches) in 
   t
 
-(* This function is used to create the abstraction in mkCase
-   branches. Both branches of this function should behave the same,
-   but we keep it to debug the construction of the [mkCase]
-   function. *)
-let debug_mk_lambdas term args_ty = 
-  if false
-  then 
-    term
-  else
-    (Term.it_mkLambda_or_LetIn
-       (* (Term.mkApp (term, Termops.extended_rel_vect 0 args_ty)) *)
-       term 
-       args_ty)
-
 (** Checks whether the rel_context [ctx] depends on the de Bruijn
     variable [k] *)
 let depends_on k ctx = 
@@ -216,15 +202,6 @@ let filter_deps ctx =
 *)
 let filter_return_clause ctx sort =   
   Term.mkArity (filter_deps ctx, sort)
-
-(* Let [term] be [C args_ty], we replace all occurences of [term] in [concl]. *)
-let refine_concl concl term constructor args_ty = 
-  let new_concl =
-    Term.lift (- Term.rel_context_nhyps args_ty) concl
-    (* Termops.replace_term term (Term.mkApp (constructor, Termops.extended_rel_vect 0 args_ty)) concl  *)
-  in 
-  Format.eprintf "old:%a\nreplace:%a\nnew conclusion:%a\n\n" pp_constr concl pp_constr term pp_constr new_concl;
-  new_concl
   
 (* construct the term fun x => match x with | t => a | _ => False -> True end *)
 let diag env sigma (leaf_ids: Names.Id.t list)
@@ -281,7 +258,6 @@ let diag env sigma (leaf_ids: Names.Id.t list)
 	    let env' = Environ.push_rel_context args_ty env in
 	    let stt = List.map (Term.map_rel_declaration (Term.lift 1)) stt in	   
 	    let matched = Term.lift (Term.rel_context_nhyps args_ty) (Term.mkRel 1) in 
-	    (* let concl = refine_concl lift_concl matched (Term.mkConstruct (ind,constructor)) args_ty in  *)
 	    let term =
 	      build_diag env' 
 		lift_subst (succ shift)
@@ -289,8 +265,7 @@ let diag env sigma (leaf_ids: Names.Id.t list)
 		(split_trees@ll)
 		(args_ty@stt)
 	    in
-	    Format.eprintf "\n[kt] rel_context:%a\nterm:%a\n" pp_rel_context args_ty pp_constr term;
-	    debug_mk_lambdas term args_ty
+	    (Term.it_mkLambda_or_LetIn term  args_ty)
 	  in 
 	  (* The function that is used to build the term in the non-matching branches of the case *)
 	  let kf args_ty = Term.it_mkLambda_or_LetIn devil (args_ty@ (filter_deps stt)) in  
@@ -378,7 +353,7 @@ let invert h gl =
 	let concl_ty = Termops.it_mkProd_or_LetIn
 	  (
 	    let t = Term.mkApp (diag, c.Inductiveops.cs_concl_realargs) in
-	    let t = Term.mkApp (t, [| Inductiveops.build_dependent_constructor c |]) in
+	    (* DEL: let t = Term.mkApp (t, [| Inductiveops.build_dependent_constructor c |]) in *)
 	    t
 	  )
 	  ctx
@@ -413,11 +388,19 @@ let invert h gl =
 	  let ind = fst (Inductiveops.dest_ind_family  ind_family) in
 	  let case_info = Inductiveops.make_case_info env ind  Term.RegularStyle in
 	  let return_clause =
+	    (* This is a tricky bit of code. The [ctx] value must be
+	       an arity like e.g., [n:nat; H:even n], because of the
+	       "as" clause of match. Nevertheless, the diag term does
+	       not require this extra argument: hence, we recompute
+	       the arity without the last element [ctx'], and use it
+	       to build the application. *)
 	    let ctx = (Inductiveops.make_arity_signature env true ind_family) in
+	    let ctx' = (Inductiveops.make_arity_signature env false ind_family) in
 	    Term.it_mkLambda_or_LetIn
-	      (Term.mkApp (Term.mkVar diag, Termops.extended_rel_vect 0 ctx))
+	      (Term.mkApp (Term.mkVar diag, Termops.extended_rel_vect 1 ctx'))
 	      ctx
 	  in
+	  Format.eprintf "return_clause:%a\n" pp_constr return_clause; 
 	  let term =
 	    Term.mkCase
 	      (case_info,
@@ -430,7 +413,7 @@ let invert h gl =
 		 ) branches
 	      )
 	  in
-	  Format.printf "proof term: %a\n" pp_constr term;
+	  Format.eprintf "proof term: %a\n" pp_constr term;
 	  Tactics.refine term gl
 	)
     ) gl
