@@ -1,24 +1,31 @@
 module P = struct
-  open Print
-end
+  include Print
 
-let pp_constr fmt x = Pp.pp_with fmt (Printer.pr_constr x)
-let pp_constr_env env fmt x = Pp.pp_with fmt (Termops.print_constr_env env x)
-let pp_gl fmt x = Pp.pp_with fmt (Printer.pr_goal x)
-let pp_id fmt x = Pp.pp_with fmt (Names.Id.print x)
-let pp_name fmt = function 
-  | Names.Anonymous -> Format.fprintf fmt "_"
-  | Names.Name id -> pp_id fmt id
-let pp_list pp fmt l = List.iter (fun x -> Format.fprintf fmt "%a; " pp x) l
-let pp_list_nl pp fmt l = List.iter (fun x -> Format.fprintf fmt "%a;\n" pp x) l
-let pp_constrs fmt l = (pp_list pp_constr) fmt l
-let pp_rel_context fmt ctx = 
-  let rec aux = function 
-    | [] -> ()
-    | (name, _, ty)::q -> Format.fprintf fmt "%a:\t%a\n" pp_name name pp_constr ty; 
-      aux q
-  in
-  aux (List.rev ctx)
+  (* from a coq pp_command to a Pprint document *)
+  let pp x = Format.ksprintf string "%a" Pp.pp_with x
+    
+  let constr x = pp (Printer.pr_constr x)
+  let goal gl  = pp (Printer.pr_goal x)  
+  let id  x    = pp (Names.Id.print x)
+  let name x   = function 
+    | Names.Anonymous -> string "_"
+    | Names.Name x -> id x
+      
+  let constrs l = separate_map hardline constr l
+  let rel_context ctx = 
+    surround_separate_map 2 1
+      (brackets empty) 				(* when void *)
+      lbracket
+      semi
+      rbracket
+      (fun (n, _, ty) -> 
+	name n ^/^ colon ^/^ constr ty
+      )
+      (
+	List.rev ctx
+      )
+      
+end
 
 let debug = true
 
@@ -422,13 +429,3 @@ let invert h gl =
 	)
     ) gl
 
-open Tacmach
-open Tacticals
-open Tacexpr
-open Tacinterp
-open Genarg
-
-
-TACTIC EXTEND invert
-| ["invert" ident(h)] ->     [invert h]
-END;;
