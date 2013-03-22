@@ -1,3 +1,7 @@
+module P = struct
+  open Print
+end
+
 let pp_constr fmt x = Pp.pp_with fmt (Printer.pr_constr x)
 let pp_constr_env env fmt x = Pp.pp_with fmt (Termops.print_constr_env env x)
 let pp_gl fmt x = Pp.pp_with fmt (Printer.pr_goal x)

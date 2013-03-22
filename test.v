@@ -25,7 +25,8 @@ Section ex1.
   Lemma foo n h v: 
     P (S n) (cons n h v) -> P n v.
       intros H.
-        invert H.  auto. auto. Show Proof. 
+      Set Printing All. 
+      invert H.  auto. auto. Show Proof. 
   Qed.
 End ex1.  
 
