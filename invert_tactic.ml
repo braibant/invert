@@ -67,6 +67,8 @@ type split_tree =
   ((Names.inductive * int (* constructor number *) *
       Term.constr list (* params *) * 'a list) option as 'a)
 
+      
+  
 type split_tree_leaf =
   | LVar of Names.identifier
   | LTerm of Term.constr
@@ -86,6 +88,9 @@ type split_tree_leaf =
 
     Params of constructors are putted in split trees because they are need to
     construct correct typing env for building diag.
+
+    Note: the split_tree_leaf list corresponds to a telescope: that
+    is, the most recent binder is a the end of the list.
 *)
 let make_a_pattern env sigma args : split_tree list * split_tree_leaf list =
   let rec aux t vars =
@@ -152,43 +157,39 @@ let mk_match env sigma ind constructor params term return_clause kt kf =
   let t = Term.mkCase (case_info,return_clause,term,branches) in 
   t
 
-(** Checks whether the rel_context [ctx] depends on the de Bruijn
-    variable [k] *)
-let depends_on k ctx = 
-  let rec fold k ctx = 
-    match ctx with 
-    | [] -> false
-    | (_,None,t) :: ctx -> not (Term.noccurn k t) || fold (pred k) ctx
-    | (_,Some b,t) :: ctx -> 
-      not (Term.noccurn k t) 
-      || not (Term.noccurn k b) 
-      || fold (pred k) ctx
-  in 
-  fold (k + List.length ctx) ctx
-
-(** Given a rel_context, filter_deps keeps only the elements that are
-    used dependently *)
-let filter_deps ctx = 
-  let rec aux ctx rctx = 
-    match rctx with 
-    | [] -> List.rev rctx
-    | t :: q -> 
-      if depends_on 1 q 
-      then aux q (t :: ctx)
-      else aux (Termops.lift_rel_context (-1) q) ctx
-  in 
-  aux ctx []
 
 (** The return clause that we builds depends on the shape of the
     rel_context [ctx].
 *)
 let filter_return_clause ctx sort =   
-  Term.mkArity (filter_deps ctx, sort)
-  
+  Term.mkArity (Context.to_rel_context (Context.filter_deps ctx), sort)
+
+
+let debug (st: split_tree list) =
+  let open Print in 
+  let rec aux = function 
+    | None -> string "#"
+    | Some (ind, constructor, params, split_trees) ->
+      group
+	(constr (Term.mkConstruct (ind, constructor)) 
+	 ^/^
+	   brackets (separate_map comma aux split_trees)
+	)
+  in 
+  surround_separate_map 2 2
+    (brackets empty) 
+    lbracket
+    (break 1)
+    rbracket
+    aux 
+    st
+    
+    
+
 (* construct the term fun x => match x with | t => a | _ => False -> True end *)
 let diag env sigma (leaf_ids: Names.Id.t list)
     (split_trees: split_tree list) 
-    (split_tree_types: Term.rel_context)
+    (split_tree_types: Telescope.t)
     (concl: Term.constr)  concl_sort  =
   (** build the return predicate
 
@@ -203,8 +204,14 @@ let diag env sigma (leaf_ids: Names.Id.t list)
       subst shift
       identifier_list
       (stl : split_tree list)
-      (stt: Term.rel_context)
+      (stt: Telescope.t)
       =
+    Print.(
+      let stl = group (string "stl" ^/^ debug stl) in 
+      let stt = group (string "stt" ^/^ rel_context stt) in 
+      let msg = surround 2 2 (string "begin") (stl ^^ hardline ^^ stt) (string "end") in 
+      eprint msg
+    );
     match stl, stt with
     (* BUGS:
      * deal with letins in constructor args telescope
@@ -216,15 +223,15 @@ let diag env sigma (leaf_ids: Names.Id.t list)
       Format.eprintf "[],[]\n";            
       let () = assert (CList.is_empty identifier_list) in
       Print.(eprint (surround_separate_map 2 2 empty (string "substitution:" ^^ lbrace) (break 1) rbrace
-		      (fun (i,t) -> id i ^/^ string "=>" ^/^ constr t)
+		      (fun (i,t) -> group (id i ^/^ string "=>" ^/^ constr t))
 		      subst
       ));
       let term = Term.replace_vars subst (Term.lift shift concl) in 
-      (* Format.eprintf "return:%a\n" pp_constr term; *)
       term
-    | ll, (_,Some _,_)::stt ->      
+    | ll, ((_,Some _,_) as decl)::stt ->      
       Printf.eprintf "Warning: constructor with let_ins in inversion/build_diag.\n";
-      build_diag env subst shift identifier_list stl stt 
+      let term = build_diag env subst shift identifier_list stl stt in 
+      Term.mkLambda_or_LetIn decl (Term.lift 1 term) 
     | head::ll, ((name_argx,None,ty_argx) as rel) ::stt ->
       let lift_subst = List.map (fun (id, tm) -> (id, Term.lift 1 tm)) subst in
       begin match head with
@@ -249,7 +256,7 @@ let diag env sigma (leaf_ids: Names.Id.t list)
 	    (Term.it_mkLambda_or_LetIn term  args_ty)
 	  in 
 	  (* The function that is used to build the term in the non-matching branches of the case *)
-	  let kf args_ty = Term.it_mkLambda_or_LetIn devil (args_ty@ (filter_deps stt)) in  
+	  let kf args_ty = Term.it_mkLambda_or_LetIn devil (args_ty@ (Context.filter_deps stt)) in  
 	  let return_clause = 
 	    let ind_family = Inductiveops.make_ind_family (ind, params) in
 	    let ctx_ind = Inductiveops.make_arity_signature env true ind_family in
@@ -259,7 +266,7 @@ let diag env sigma (leaf_ids: Names.Id.t list)
 	      ctx_ind
 	  in
 	  let term = mk_match env sigma ind constructor params (Term.mkRel 1) return_clause kt kf in   
-	  if depends_on 1 stt 
+	  if Telescope.depends_on 1 stt 
 	  then 
 	    begin 
 	      (* Format.eprintf "dependent branch for %a\n" pp_name name_argx; *)
@@ -278,7 +285,7 @@ let diag env sigma (leaf_ids: Names.Id.t list)
 	match identifier_list with
 	| [] -> Errors.anomaly (Pp.str "build_diag: Less variable than split_tree leaves")
 	|id_h :: id_q ->
-	  if depends_on 1 stt 
+	  if Telescope.depends_on 1 stt 
 	  then 
 	    begin 	      
 	      Term.mkLambda 
@@ -318,7 +325,7 @@ let invert h gl =
     let args_ty = Inductiveops.make_arity_signature env false ind_family in    
     (Term.it_mkLambda_or_LetIn
        (Term.mkApp ((Term.mkApp (return_pred, generalized_hyps)),
-		    Termops.extended_rel_vect 0 (filter_deps args_ty)))
+		    Termops.extended_rel_vect 0 (Context.filter_deps args_ty)))
        (args_ty))
   in
   (* let _ = Format.printf "diag: %a\n" pp_constr return_clause in *)

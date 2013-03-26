@@ -1,4 +1,6 @@
-SRC:= print.ml invert_tactic.ml invert.ml4 test.v
+SRC:= 	print.ml print.mli \
+	context.ml context.mli telescope.ml telescope.mli \
+	invert_tactic.ml invert.ml4 test.v
 
 COQLIB = $(shell coqc -where)/
 
@@ -37,6 +39,7 @@ VFILES :=  $(filter %.v, $(SRC))
 
 CMO:= $(MLFILES:.ml=.cmo) $(MLPACKFILES:.mlpack=.cmo) $(ML4FILES:.ml4=.cmo)
 CMX:= $(MLFILES:.ml=.cmx) $(MLPACKFILES:.mlpack=.cmx) $(ML4FILES:.ml4=.cmx)
+CMIFILES=$(CMO:.cmo=.cmi)
 VOFILES := $(VFILES:.v=.vo)
 
 all: $(CMO) $(CMX) invert.cmo invert.cmxs $(VOFILES)
@@ -66,6 +69,9 @@ printenv:
 
 %.cmx: %.ml
 	$(OCAMLOPT) $(LIBS) -c $<
+
+%.cmi: %.mli
+	$(OCAMLC) $(LIBS) -c $<
 
 %.ml4.d: %.ml4
 	$(OCAMLDEP) $(PP) -slash $(LIBS) $< > $@ 
