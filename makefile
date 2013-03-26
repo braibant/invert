@@ -32,15 +32,8 @@ VFILES :=  $(filter %.v, $(SRC))
 
 # DEPENDENCIES 
 
--include $(addsuffix .d,$(ML4FILES))
-.SECONDARY: $(addsuffix .d,$(ML4FILES))
-
--include $(addsuffix .d,$(MLFILES))
-.SECONDARY: $(addsuffix .d,$(MLFILES))
-
--include $(addsuffix .d,$(VFILES))
-.SECONDARY: $(addsuffix .d,$(VFILES))
-
+-include $(addsuffix .d,$(SRC))
+.SECONDARY: $(addsuffix .d,$(SRC))
 
 CMO:= $(MLFILES:.ml=.cmo) $(MLPACKFILES:.mlpack=.cmo) $(ML4FILES:.ml4=.cmo)
 CMX:= $(MLFILES:.ml=.cmx) $(MLPACKFILES:.mlpack=.cmx) $(ML4FILES:.ml4=.cmx)
@@ -88,4 +81,3 @@ printenv:
 
 %.vo %.glob: %.v
 	$(COQC) $(COQDEBUG) $(COQFLAGS) $*
-
