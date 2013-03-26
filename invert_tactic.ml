@@ -214,7 +214,6 @@ let diag env sigma (leaf_ids: Names.Id.t list)
     );
     match stl, stt with
     (* BUGS:
-     * deal with letins in constructor args telescope
      * deal with type dependency between split trees
      * one day, do not do useless destruct: for I : forall n, Fin.t n ->
      * foo, it is useless to destruct (S m) if we have I (S m) (Fin.F1)
@@ -243,7 +242,7 @@ let diag env sigma (leaf_ids: Names.Id.t list)
 	    let env' = Environ.push_rel_context args_ty env in
 	    let stt = List.map (Term.map_rel_declaration (Term.lift 1)) stt in	   
 	    let matched = Term.lift (Term.rel_context_nhyps args_ty) (Term.mkRel 1) in 
-	    Print.(eprint (group (string "sub-call:" ^/^ rel_context args_ty)));
+	    Print.(eprint (group (string "sub-call: rev-appending" ^/^ rel_context args_ty)));
 	    let term =
 	      build_diag env' 
 		lift_subst (succ shift)
@@ -279,22 +278,27 @@ let diag env sigma (leaf_ids: Names.Id.t list)
 	      (* Format.eprintf "non-dependent branch\n";	       *)
 	      sanity (Environ.push_rel rel env) sigma term; term
 	    end
-
 	end
       | None ->
 	match identifier_list with
 	| [] -> Errors.anomaly (Pp.str "build_diag: Less variable than split_tree leaves")
 	|id_h :: id_q ->
-	  if Telescope.depends_on 1 stt 
-	  then 
-	    begin 	      
-	      Term.mkLambda 
+	  if Telescope.depends_on 1 stt
+	  then
+	    begin 	 
+	      let term = Term.mkLambda 
 		(name_argx, ty_argx,
 		 build_diag env ((id_h, Term.mkRel 1):: lift_subst)  (succ shift) id_q ll stt
 		)
+	      in 
+	      Print.(eprint (string "None, dep" ^/^ braces (constr term)));
+	      term
 	    end
 	  else
-	    build_diag env ((id_h, Term.mkRel 1) :: lift_subst) (succ shift) id_q  ll stt
+	    (
+	      Print.(eprint (string "None, non-dep"));
+	      build_diag env ((id_h, Term.mkRel 1) :: lift_subst) (succ shift) id_q  ll stt
+	    )
       end
   in
   build_diag env  [] 0 leaf_ids  split_trees split_tree_types 
