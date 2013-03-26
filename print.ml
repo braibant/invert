@@ -18,4 +18,28 @@ let print doc =
   Printf.printf "%a" run doc 
 
 let eprint doc =
-  Printf.eprintf "%a" run doc
+  Printf.eprintf "%a\n" run doc
+
+  (* from a coq pp_command to a Pprint document *)
+let pp x = string ( Pp.string_of_ppcmds x)
+  
+let constr x = pp (Printer.pr_constr x)
+let goal gl  = pp (Printer.pr_goal gl)  
+let id  x    = pp (Names.Id.print x)
+let name   = function 
+  | Names.Anonymous -> string "_"
+  | Names.Name x -> id x
+    
+let constrs l = separate_map hardline constr l
+let rel_context ctx = 
+  surround_separate_map 2 1
+    (brackets empty) 				(* when void *)
+    lbracket
+    semi
+    rbracket
+    (fun (n, _, ty) -> 
+      name n ^/^ colon ^/^ constr ty
+    )
+    (
+      List.rev ctx
+    )   

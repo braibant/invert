@@ -46,9 +46,6 @@ clean:
 	rm -f *.d
 	rm -f *.o *.cmi *.glob
 
-# depend: 
-# 	$(OCAMLDEP) $(PP) $(LIBS) $(MLFILES) $(ML4FILES) > .depend
-
 printenv:
 	@echo 'PP =	$(PP)'
 	@echo 'CMX=	$(CMX)'

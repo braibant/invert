@@ -1,31 +1,3 @@
-module P = struct
-  include Print
-
-  (* from a coq pp_command to a Pprint document *)
-  let pp x = string ( Pp.string_of_ppcmds x)
-    
-  let constr x = pp (Printer.pr_constr x)
-  let goal gl  = pp (Printer.pr_goal gl)  
-  let id  x    = pp (Names.Id.print x)
-  let name   = function 
-    | Names.Anonymous -> string "_"
-    | Names.Name x -> id x
-      
-  let constrs l = separate_map hardline constr l
-  let rel_context ctx = 
-    surround_separate_map 2 1
-      (brackets empty) 				(* when void *)
-      lbracket
-      semi
-      rbracket
-      (fun (n, _, ty) -> 
-	name n ^/^ colon ^/^ constr ty
-      )
-      (
-	List.rev ctx
-      )
-      
-end
   
 let debug = true
 
@@ -33,14 +5,13 @@ let sanity env sigma t =
   if debug 
   then 
     begin 
-      P.(eprint (string "Typing:" ^/^ P.constr t));
+      Print.(eprint (string "Typing:" ^/^ Print.constr t));
       try 
 	let ty = Typing.type_of env sigma t in 
-	P.(eprint (string "Type:" ^/^ P.constr ty));
+	Print.(eprint (string "Type:" ^/^ Print.constr ty));
       with e -> 
-	P.(eprint (string "Unable to type the term"))
+	Print.(eprint (string "Unable to type the term"))
     end
-
 
 let mk_fun
     (name:Names.identifier)
@@ -244,11 +215,10 @@ let diag env sigma (leaf_ids: Names.Id.t list)
     | [], [] -> (* Not dependent inductive *)
       Format.eprintf "[],[]\n";            
       let () = assert (CList.is_empty identifier_list) in
-      (* let _ =  *)
-      (* 	Format.eprintf "substitution: "; *)
-      (* 	List.iter (fun (id,t) -> Format.eprintf "%a => %a, " pp_id id pp_constr t) subst; *)
-      (* 	Format.eprintf "\n" *)
-      (* in *)
+      Print.(eprint (surround_separate_map 2 2 empty (string "substitution:" ^^ lbrace) (break 1) rbrace
+		      (fun (i,t) -> id i ^/^ string "=>" ^/^ constr t)
+		      subst
+      ));
       let term = Term.replace_vars subst (Term.lift shift concl) in 
       (* Format.eprintf "return:%a\n" pp_constr term; *)
       term
@@ -381,7 +351,6 @@ let invert h gl =
   cps_mk_letin "diag" return_clause
     (fun diag ->
       let branches = branches (Term.mkVar diag) in
-      Format.printf "assert vector\n%!";
       assert_vector
 	(Array.map fst branches)
 	(
