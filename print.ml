@@ -35,11 +35,11 @@ let rel_context ctx =
   surround_separate_map 2 1
     (brackets empty) 				(* when void *)
     lbracket
-    semi
+    (semi ^^ break 1)
     rbracket
     (fun (n, _, ty) -> 
       name n ^/^ colon ^/^ constr ty
     )
     (
-      List.rev ctx
+      ctx
     )   

@@ -236,9 +236,6 @@ let diag env sigma (leaf_ids: Names.Id.t list)
       let lift_subst = List.map (fun (id, tm) -> (id, Term.lift 1 tm)) subst in
       begin match head with
       | Some (ind, constructor, params, split_trees) ->
-	(* Format.eprintf "C = %a, %a : %a\n" pp_constr (Term.mkConstruct (ind,constructor))  *)
-	(*   pp_name name_argx  *)
-	(*   pp_constr ty_argx; *)
 	begin 
 	  (* The function that is used to build the term in the
 	     matching branch of the case *)
@@ -246,17 +243,20 @@ let diag env sigma (leaf_ids: Names.Id.t list)
 	    let env' = Environ.push_rel_context args_ty env in
 	    let stt = List.map (Term.map_rel_declaration (Term.lift 1)) stt in	   
 	    let matched = Term.lift (Term.rel_context_nhyps args_ty) (Term.mkRel 1) in 
+	    Print.(eprint (group (string "sub-call:" ^/^ rel_context args_ty)));
 	    let term =
 	      build_diag env' 
 		lift_subst (succ shift)
 		identifier_list
 		(split_trees@ll)
-		(args_ty@stt)
+		((List.rev args_ty)@stt)
 	    in
 	    (Term.it_mkLambda_or_LetIn term  args_ty)
 	  in 
 	  (* The function that is used to build the term in the non-matching branches of the case *)
-	  let kf args_ty = Term.it_mkLambda_or_LetIn devil (args_ty@ (Context.filter_deps stt)) in  
+	  let kf args_ty = 
+	    let stt = Context.filter_deps stt in 
+	    Term.it_mkLambda_or_LetIn devil (args_ty @ stt) in  
 	  let return_clause = 
 	    let ind_family = Inductiveops.make_ind_family (ind, params) in
 	    let ctx_ind = Inductiveops.make_arity_signature env true ind_family in
