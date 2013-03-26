@@ -1,14 +1,7 @@
 -R . Invert
--I pprint/src/
-pprint/src/PPrintCombinators.ml  
-pprint/src/PPrintOCaml.ml
-pprint/src/PPrintEngine.ml
-pprint/src/PPrintEngine.mli
-pprint/src/PPrintRenderer.ml
-pprint/src/PPrint.ml
-pprint/src/PPrintTest.ml
 print.ml
 invert.ml4
+invert.mlpack
 test.v
 
 -custom "" print.cmo invert.cmo
