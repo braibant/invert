@@ -14,3 +14,10 @@ let depends_on k ctx =
       || fold (succ k) ctx
   in 
   fold k ctx
+
+let filter_deps tel = 
+  List.rev (Context.filter_deps (List.rev tel))
+
+let to_rel_context x = 
+  List.rev x
+  

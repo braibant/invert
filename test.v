@@ -30,8 +30,8 @@ Section ex1.
           let diag n :=
               match n as n' return vector n' -> Type with 
                 | 0 =>  fun v => False -> True
-                | S n => fun v => 
-                          match v with 
+                | S n => fun (v: vector (S n)) => 
+                          match v return Type with 
                             | nil => False -> True
                             | cons m h t =>  P m t
                           end
@@ -44,7 +44,10 @@ Section ex1.
       
       Restart. 
       Set Printing All. 
-      intros H. diag H D.  auto. auto. Show Proof. 
+      intros H. diag H D.  
+      refine (match H in P n' v' return diag n' v' with | Pnil  => _  |Pcons n v h' h => _ end).
+      simpl. 
+      auto. simpl. auto. Show Proof. 
   Qed.
 End ex1.  
 

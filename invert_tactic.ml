@@ -185,10 +185,31 @@ let mk_matchi env sigma ind constructor params term return_clause kt kf =
 
 
 (** The return clause that we builds depends on the shape of the
-    rel_context [ctx].
+    telescope [tel]
 *)
-let filter_return_clause ctx sort =   
-  Term.mkArity (Context.to_rel_context (Context.filter_deps ctx), sort)
+let filter_return_clause tel sort = 
+  Print.(eprint (group (string "telescope" ^^ telescope tel)));
+  let rec keep k acc = function 
+    | [] -> acc
+    | (_,None,ty) as decl :: q -> 
+      let realq = q in 
+      if not (Term.noccurn k ty) 
+      then			  (* k occurs *)
+	keep (succ k) (decl :: acc) realq
+      else 
+	keep (succ k) (Termops.lift_rel_context (-1) acc) realq
+    | (_,Some b,ty) as decl :: q -> 
+      let realq = q in 
+      if not (Term.noccurn k ty)  || not (Term.noccurn k b)
+      then			  (* k occurs *)
+	keep (succ k) (decl :: acc) (realq)
+      else 
+	keep (succ k) (Termops.lift_rel_context (-1) acc) realq
+  in 
+  let result = keep 1 [] tel in 
+  Print.(eprint (group (string "result" ^^ telescope result)));
+  Term.mkArity (keep 1 [] tel, sort)
+  
 
 
 let debug (st: split_tree list) =
@@ -344,7 +365,7 @@ let diag2 env sigma (leaf_ids: Names.Id.t list)
     (split_trees: split_tree list) 
     (split_tree_types: Telescope.t)
     (concl: Term.constr)  concl_sort  =
-  
+
   let rec build_diag env 
       subst shift
       identifier_list
@@ -387,8 +408,7 @@ let diag2 env sigma (leaf_ids: Names.Id.t list)
 	    let kt i args_ty =
 	      let env' = Environ.push_rel_context args_ty env in
 	      Print.(eprint (group (string "sub-call: rev-appending" ^/^ rel_context args_ty)));
-	      let constr = Term.mkApp (i, 
-				       Termops.extended_rel_vect 0 args_ty)
+	      let constr = Term.mkApp (i, Termops.extended_rel_vect 0 args_ty)
 	      in 
 	      let term =
 		build_diag env' 
@@ -399,14 +419,14 @@ let diag2 env sigma (leaf_ids: Names.Id.t list)
 	      in term
 	    in 
 	    (* The function that is used to build the term in the non-matching branches of the case *)
-	    let kf _ args_ty = 
-	      let stt = Context.filter_deps stt in 
-	      Term.it_mkLambda_or_LetIn devil (args_ty @ stt) in  	       
+	    let kf i args_ty = 
+	      let constr = Term.mkApp (i, Termops.extended_rel_vect 0 args_ty) in 
+	      Term.it_mkLambda_or_LetIn devil (args_ty @ (refine_stt constr stt)) in  	       
 	    let return_clause = 
 	      let ind_family = Inductiveops.make_ind_family (ind, params) in
 	      let ctx_ind = Inductiveops.make_arity_signature env true ind_family in
-	      let nhyps = (Term.rel_context_nhyps ctx_ind) in 
-	      let stt =  List.map (Term.map_rel_declaration (Term.lift nhyps)) stt in
+	      (* let nhyps = (Term.rel_context_nhyps ctx_ind) in  *)
+	      (* let stt =  List.map (Term.map_rel_declaration (Term.lift nhyps)) stt in *)
 	      Term.it_mkLambda_or_LetIn
 		(filter_return_clause stt concl_sort)
 		ctx_ind
@@ -439,7 +459,7 @@ let pose_diag h name gl =
     diag2 env sigma leaves_ids split_trees (List.rev ctx)  concl (Termops.new_sort_in_family sort_family) 
   in
   Print.(eprint (stripes( string "final diag") ^/^ constr diag));
-  Tactics.pose_proof (Names.Name name) diag gl
+  cps_mk_letin "diag" diag (fun k -> Tacticals.tclIDTAC) gl
 
     
   
