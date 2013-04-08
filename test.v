@@ -81,6 +81,8 @@ Abort.
 
 End SCHEMES.
 End vectors. 
+
+
 Inductive mul3 : nat -> Prop :=
   | T0 : mul3 0
   | T3: forall n, mul3 n -> mul3 (3 + n).
@@ -111,18 +113,6 @@ Show Proof.
 Qed.  
 End sec_absu_2ismul3.
 
-Section vect. 
-  Variable A : Type. 
-  Inductive vector : nat -> Type :=
-    | nil : vector 0
-    | cons : forall n, A -> vector n -> vector (S n). 
-  
-  
-  Goal forall v : vector 0, v = nil. 
-  intros. 
-  Fail invert v. 
-  Abort. 
-End vect. 
   
 
 Inductive tm : Type :=
