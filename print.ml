@@ -42,4 +42,66 @@ let rel_context ctx =
     )
     (
       ctx
-    )   
+    )
+   
+(** I have reimplemented part of a pretty printer for Coq, in order to
+    print the telescopes in a meaningful manner. I think it is quite
+    risky to have two printers at the same time, but I do not want to
+    reimplement everything at once. *)
+let rec constr' (env: Names.Name.t list) t = 
+  match Term.kind_of_term t with 
+  | Term.Rel i -> 
+    begin try (match List.nth env (i - 1) with 
+    | Names.Anonymous -> underscore ^^ int i 
+    | n -> name n)
+      with _ -> at ^^ int i
+    end
+  | Term.Var x -> id x 
+  | Term.App (hd,args) -> 
+    surround_separate_map 2 1 
+      (constr' env hd)
+      (constr' env hd)
+      (break 1)
+      (empty)
+      (fun c -> parens (constr' env c))
+      (Array.to_list args)
+  | Term.Lambda (n,ty,c) -> 
+    group (string "fun" ^/^ parens (name n ^/^ colon ^/^ constr' (n::env) ty))
+    ^/^ string "=>" 
+    ^/^ parens (constr' (n :: env) c)
+  | Term.Prod (n,ty,c) -> 
+    group (string "forall" ^/^ parens (name n ^/^ colon ^/^ constr' (n::env)ty))
+    ^/^ string "," 
+    ^/^ parens (constr' (n :: env) c)
+  | Term.LetIn (n,body,ty,c) -> 
+    group (string "let" ^/^ parens (name n ^/^ colon ^/^ constr' (n::env)ty))
+    ^/^ string ":=" ^/^  group (constr' (env)c) 
+    ^/^ string "in" ^/^ parens (constr' (n::env)c)
+  | Term.Const c -> pp (Printer.pr_constant (Global.env ()) c)
+  | Term.Ind c  -> pp (Printer.pr_inductive (Global.env ()) c) 
+  | Term.Construct c  -> pp (Printer.pr_constructor (Global.env ()) c) 
+  | Term.Case (ci,p,c,ac) -> 
+    group (group (string "match" ^/^ constr' env c) 
+    ^/^ group (string "returnclause" ^/^ constr' env p))
+    ^^
+      group (surround 2 2 
+	       (string "with" )  
+	       (string "TODO")
+	       (string "end"))
+    
+  | _ -> string "TODO"
+  
+  
+let telescope ctx = 
+  let rec aux env = function 
+    | [] -> empty
+    | (n,_,ty) :: q  ->
+      group (name n ^/^ colon ^/^ constr' env ty) 
+      ^^ semi  ^^ break 1
+      ^^ aux (n::env) q
+  in 
+  brackets (aux [] ctx)
+    
+      
+    
+  

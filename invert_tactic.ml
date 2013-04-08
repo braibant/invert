@@ -146,9 +146,35 @@ let mk_match env sigma ind constructor params term return_clause kt kf =
 	let branch_body =
 	  if i + 1 = constructor
 	  then 
-	    kt args_ty
+	    kt  args_ty 
 	  else
-	    kf args_ty
+	    kf  args_ty 
+ 	in
+	branch_body
+      )
+      branches_type
+  in
+  let t = Term.mkCase (case_info,return_clause,term,branches) in 
+  t
+
+(* Given an inductive I, and a constructor C, build the match that
+   filters the constructor C, and calls the [kt] function to build a
+   term; otherwise, calls the [kf] function. *)
+let mk_matchi env sigma ind constructor params term return_clause kt kf = 
+  let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in
+  (* the type of each constructor *)
+  let (branches_type: Term.types array) = Inductiveops.arities_of_constructors env ind in
+  let branches =
+    Array.mapi
+      (fun i ty ->
+	let ty_with_concrete_params = Term.prod_applist ty params in
+	let (args_ty,concl_ty) = Term.decompose_prod_assum ty_with_concrete_params in
+	let branch_body =
+	  if i + 1 = constructor
+	  then 
+	    kt (Term.mkConstruct (ind,i + 1)) args_ty 
+	  else
+	    kf (Term.mkConstruct (ind,i + 1)) args_ty 
  	in
 	branch_body
       )
@@ -184,6 +210,7 @@ let debug (st: split_tree list) =
     aux 
     st
     
+
     
 
 (* construct the term fun x => match x with | t => a | _ => False -> True end *)
@@ -303,6 +330,93 @@ let diag env sigma (leaf_ids: Names.Id.t list)
   in
   build_diag env  [] 0 leaf_ids  split_trees split_tree_types 
 
+    
+(* replace [Rel 1] with [c] in [stt] *)
+let refine_stt c (stt: Telescope.t) = 
+  let rec aux n acc = function 
+    | [] -> List.rev acc
+    | (name,None,ty)::q -> 
+      aux (n+1) ((name,None,Term.substnl [c] n ty)::acc) q
+  in 
+  aux 0 [] stt
+
+let diag2 env sigma (leaf_ids: Names.Id.t list)
+    (split_trees: split_tree list) 
+    (split_tree_types: Telescope.t)
+    (concl: Term.constr)  concl_sort  =
+  
+  let rec build_diag env 
+      subst shift
+      identifier_list
+      (stl : split_tree list)
+      (stt: Telescope.t)
+      =
+    Print.(
+      let stl = group (string "stl" ^/^ debug stl) in 
+      let stt = group (string "stt" ^/^ telescope stt) in 
+      let msg = surround 2 2 (string "begin") (stl ^^ hardline ^^ stt) (string "end") in 
+      eprint msg
+    );
+    match stl, stt with
+    | [], [] -> (* Not dependent inductive *)
+      let () = assert (CList.is_empty identifier_list) in
+      Print.(eprint (surround_separate_map 2 2 empty (string "substitution:" ^^ lbrace) (break 1) rbrace
+		       (fun (i,t) -> group (id i ^/^ string "=>" ^/^ constr t))
+		       subst
+      ));
+      let term = Term.replace_vars subst (Term.lift shift concl) in 
+      term
+    | ll, ((_,Some _,_) as decl)::stt ->      
+      Printf.eprintf "Warning: constructor with let_ins in inversion/build_diag.\n";
+      let term = build_diag env subst shift identifier_list stl stt in 
+      Term.mkLambda_or_LetIn decl (Term.lift 1 term) 
+    | head::ll, ((name_argx,None,ty_argx) as decl) ::stt ->
+      let lift_subst = List.map (fun (id, tm) -> (id, Term.lift 1 tm)) subst in
+      (* The first thing to do is to introduce the variable we are working on. *)
+      Term.mkLambda_or_LetIn decl 
+	(
+	  match head with 	       
+	  | None ->
+	    begin match identifier_list with
+	    | [] -> Errors.anomaly (Pp.str "build_diag: Less variable than split_tree leaves")
+	    |id_h :: id_q ->
+	      build_diag env ((id_h, Term.mkRel 1) :: lift_subst) (succ shift) id_q ll stt   
+	    end
+	  | Some (ind, constructor, params, split_trees) ->
+	    (* when we refine a variable, we have to refine its occurences in the [stt] *)
+	    let kt i args_ty =
+	      let env' = Environ.push_rel_context args_ty env in
+	      Print.(eprint (group (string "sub-call: rev-appending" ^/^ rel_context args_ty)));
+	      let constr = Term.mkApp (i, 
+				       Termops.extended_rel_vect 0 args_ty)
+	      in 
+	      let term =
+		build_diag env' 
+		  lift_subst (succ shift)
+		  identifier_list
+		  (split_trees@ll)
+		  ((List.rev args_ty)@ refine_stt constr stt )
+	      in term
+	    in 
+	    (* The function that is used to build the term in the non-matching branches of the case *)
+	    let kf _ args_ty = 
+	      let stt = Context.filter_deps stt in 
+	      Term.it_mkLambda_or_LetIn devil (args_ty @ stt) in  	       
+	    let return_clause = 
+	      let ind_family = Inductiveops.make_ind_family (ind, params) in
+	      let ctx_ind = Inductiveops.make_arity_signature env true ind_family in
+	      let nhyps = (Term.rel_context_nhyps ctx_ind) in 
+	      let stt =  List.map (Term.map_rel_declaration (Term.lift nhyps)) stt in
+	      Term.it_mkLambda_or_LetIn
+		(filter_return_clause stt concl_sort)
+		ctx_ind
+	    in
+	     mk_matchi env sigma ind constructor params (Term.mkRel 1) return_clause kt kf 
+	)
+  in
+  build_diag env  [] 0 leaf_ids  split_trees split_tree_types 
+
+    
 (** Debug version, that only try to construct the diag *)
 let pose_diag h name gl = 
   let env = Tacmach.pf_env gl in
@@ -314,20 +428,15 @@ let pose_diag h name gl =
   (* get the name of the inductive and the list of arguments it is applied to *)
   let (ind_family, real_args) =
     Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma h_ty) in
-  let (_,sort_family) = Inductiveops.get_arity env ind_family in
+  let (ctx,sort_family) = Inductiveops.get_arity env ind_family in
   let constructors = Inductiveops.get_constructors env ind_family in
   let (split_trees,leaves) = make_a_pattern env sigma (real_args @ [(* Term.mkVar h *)]) in
   let (leaves_ids,generalized_hyps,concl) = prepare_conclusion_type gl leaves in
-  let return_pred =
-    let rev_ctx = List.rev_map (fun t -> Names.Anonymous, None, Typing.type_of env sigma t) real_args in
-    let ctx = List.rev_append rev_ctx [(* Names.Name h, None, h_ty *)] in
-    diag env sigma leaves_ids split_trees ctx  concl (Termops.new_sort_in_family sort_family) in
   let diag =
-    let args_ty = Inductiveops.make_arity_signature env false ind_family in    
-    (Term.it_mkLambda_or_LetIn
-       (Term.mkApp ((Term.mkApp (return_pred, generalized_hyps)),
-		    Termops.extended_rel_vect 0 (Context.filter_deps args_ty)))
-       (args_ty))
+    (* let ctx = Inductiveops.get_arity *)
+    (* let rev_ctx = List.rev_map (fun t -> Names.Anonymous, None, Typing.type_of env sigma t) real_args in *)
+    (* let ctx = List.rev_append rev_ctx [(\* Names.Name h, None, h_ty *\)] in *)
+    diag2 env sigma leaves_ids split_trees (List.rev ctx)  concl (Termops.new_sort_in_family sort_family) 
   in
   Print.(eprint (stripes( string "final diag") ^/^ constr diag));
   Tactics.pose_proof (Names.Name name) diag gl
