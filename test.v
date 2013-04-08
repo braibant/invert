@@ -9,6 +9,12 @@ Proof.
   intros.
   invert H. simpl.  auto. simpl. auto.
  Show Proof. 
+ Restart. 
+ intros. 
+ diag H D.
+ refine (match H in even n' return diag n' with | even_0 => _ | even_SS n H' => _ end); simpl. 
+ auto. 
+ auto.
 Qed. 
 
 Section ex1. 
@@ -48,6 +54,8 @@ Section ex1.
       refine (match H in P n' v' return diag n' v' with | Pnil  => _  |Pcons n v h' h => _ end).
       simpl. 
       auto. simpl. auto. Show Proof. 
+      Restart. 
+      intros H. invert H. auto. auto.
   Qed.
 End ex1.  
 
@@ -68,10 +76,11 @@ Lemma rectS {A} (P:forall {n}, t A (S n) -> Type)
  (bas: forall a: A, P (a :: []))
  (rect: forall a {n} (v: t A (S n)), P v -> P (a :: v)) :  
 forall n (v: t A (S n)),  P v.
-fix 2. intros n v. invert v.  auto. intros. destruct n0. invert X. apply  bas. auto.
-apply rect. apply rectS.
-Qed.
+fix 2. intros n v. 
+Abort. 
 
+End SCHEMES.
+End vectors. 
 Inductive mul3 : nat -> Prop :=
   | T0 : mul3 0
   | T3: forall n, mul3 n -> mul3 (3 + n).
