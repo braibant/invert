@@ -1,8 +1,21 @@
+# Here is a hack to make $(eval $(shell works:
+define donewline
+
+
+endef
+includecmdwithout@ = $(eval $(subst @,$(donewline),$(shell { $(1) | tr -d '\r' | tr '\n' '@'; })))
+$(call includecmdwithout@,$(COQBIN)coqtop -config)
+
+.DEFAULT_GOAL := all
+
 SRC:= 	print.ml print.mli \
 	context.ml context.mli telescope.ml telescope.mli \
 	invert_tactic.ml invert.ml4 test.v
 
-COQLIB = $(shell coqc -where)/
+COQDEP = ${COQBIN}coqdep
+COQC = ${COQBIN}coqc
+
+COQLIB = $(shell ${COQC} -where)/
 
 COQSRCLIBS?=-I $(COQLIB)kernel/ -I $(COQLIB)lib \
   -I $(COQLIB)library -I $(COQLIB)parsing -I $(COQLIB)pretyping \
@@ -16,16 +29,13 @@ OCAMLOPT=ocamlfind ocamlopt -package pprint -linkpkg -rectypes
 OCAMLDEP=ocamlfind ocamldep -package pprint 
 LIBS= $(COQSRCLIBS)
 
-COQDEP = coqdep
-COQC = coqc
-
 GRAMMARS?=grammar.cma
 ifeq ($(CAMLP4),camlp5)
 CAMLP4EXTEND=pa_extend.cmo q_MLast.cmo pa_macro.cmo
 else
 CAMLP4EXTEND=
 endif
-PP?=-pp 'camlp4o -I . $(COQSRCLIBS) compat5.cmo \
+PP?=-pp '"$(CAMLP4O)" -I . $(COQSRCLIBS) compat5.cmo \
   $(CAMLP4EXTEND) $(GRAMMARS) $(CAMLP4OPTIONS) -impl'
 
 ML4FILES:= $(filter %.ml4, $(SRC))
