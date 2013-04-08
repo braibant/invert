@@ -303,7 +303,8 @@ let diag env sigma (leaf_ids: Names.Id.t list)
   in
   build_diag env  [] 0 leaf_ids  split_trees split_tree_types 
 
-let invert h gl =
+(** Debug version, that only try to construct the diag *)
+let pose_diag h name gl = 
   let env = Tacmach.pf_env gl in
   let sigma = Tacmach.project gl in
   let h_ty = Tacmach.pf_get_hyp_typ gl h in
@@ -316,10 +317,40 @@ let invert h gl =
   let (_,sort_family) = Inductiveops.get_arity env ind_family in
   let constructors = Inductiveops.get_constructors env ind_family in
   let (split_trees,leaves) = make_a_pattern env sigma (real_args @ [(* Term.mkVar h *)]) in
-  (* List.iter (function *)
-  (* | LVar v -> Format.eprintf "variable %a\n" pp_constr (Term.mkVar v) *)
-  (* | LTerm t -> Format.eprintf "term %a\n" pp_constr t) leaves; *)
-  (* Printf.eprintf "\n"; *)
+  let (leaves_ids,generalized_hyps,concl) = prepare_conclusion_type gl leaves in
+  let return_pred =
+    let rev_ctx = List.rev_map (fun t -> Names.Anonymous, None, Typing.type_of env sigma t) real_args in
+    let ctx = List.rev_append rev_ctx [(* Names.Name h, None, h_ty *)] in
+    diag env sigma leaves_ids split_trees ctx  concl (Termops.new_sort_in_family sort_family) in
+  let diag =
+    let args_ty = Inductiveops.make_arity_signature env false ind_family in    
+    (Term.it_mkLambda_or_LetIn
+       (Term.mkApp ((Term.mkApp (return_pred, generalized_hyps)),
+		    Termops.extended_rel_vect 0 (Context.filter_deps args_ty)))
+       (args_ty))
+  in
+  Print.(eprint (stripes( string "final diag") ^/^ constr diag));
+  Tactics.pose_proof (Names.Name name) diag gl
+
+    
+  
+let invert h gl =
+  let env = Tacmach.pf_env gl in
+  let sigma = Tacmach.project gl in
+  let h_ty = Tacmach.pf_get_hyp_typ gl h in
+
+    (** ensures that the name x is fresh in the _first_ goal *)
+  let (!!) x = Tactics.fresh_id [] ((Names.id_of_string x)) gl in
+    (* get the name of the inductive and the list of arguments it is applied to *)
+  let (ind_family, real_args) =
+    Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma h_ty) in
+  let (_,sort_family) = Inductiveops.get_arity env ind_family in
+  let constructors = Inductiveops.get_constructors env ind_family in
+  let (split_trees,leaves) = make_a_pattern env sigma (real_args @ [(* Term.mkVar h *)]) in
+    (* List.iter (function *)
+    (* | LVar v -> Format.eprintf "variable %a\n" pp_constr (Term.mkVar v) *)
+    (* | LTerm t -> Format.eprintf "term %a\n" pp_constr t) leaves; *)
+    (* Printf.eprintf "\n"; *)
   let (leaves_ids,generalized_hyps,concl) = prepare_conclusion_type gl leaves in
   let return_pred =
     let rev_ctx = List.rev_map (fun t -> Names.Anonymous, None, Typing.type_of env sigma t) real_args in
@@ -332,9 +363,9 @@ let invert h gl =
 		    Termops.extended_rel_vect 0 (Context.filter_deps args_ty)))
        (args_ty))
   in
-  (* let _ = Format.printf "diag: %a\n" pp_constr return_clause in *)
+    (* let _ = Format.printf "diag: %a\n" pp_constr return_clause in *)
 
-  (* Cassons un etage de constructeur de l'inductif *)
+    (* Cassons un etage de constructeur de l'inductif *)
   let branches diag =
     Array.map
       (fun c ->
@@ -342,7 +373,7 @@ let invert h gl =
 	let concl_ty = Termops.it_mkProd_or_LetIn
 	  (
 	    let t = Term.mkApp (diag, c.Inductiveops.cs_concl_realargs) in
-	    (* DEL: let t = Term.mkApp (t, [| Inductiveops.build_dependent_constructor c |]) in *)
+	      (* DEL: let t = Term.mkApp (t, [| Inductiveops.build_dependent_constructor c |]) in *)
 	    t
 	  )
 	  ctx
@@ -371,16 +402,16 @@ let invert h gl =
 	    ])
 	(fun vect gl ->
 	  let env = Tacmach.pf_env gl in
-	  (* extra information for the match *)
+	    (* extra information for the match *)
 	  let ind = fst (Inductiveops.dest_ind_family  ind_family) in
 	  let case_info = Inductiveops.make_case_info env ind  Term.RegularStyle in
 	  let return_clause =
-	    (* This is a tricky bit of code. The [ctx] value must be
-	       an arity like e.g., [n:nat; H:even n], because of the
-	       "as" clause of match. Nevertheless, the diag term does
-	       not require this extra argument: hence, we recompute
-	       the arity without the last element [ctx'], and use it
-	       to build the application. *)
+	      (* This is a tricky bit of code. The [ctx] value must be
+		 an arity like e.g., [n:nat; H:even n], because of the
+		 "as" clause of match. Nevertheless, the diag term does
+		 not require this extra argument: hence, we recompute
+		 the arity without the last element [ctx'], and use it
+		 to build the application. *)
 	    let ctx = (Inductiveops.make_arity_signature env true ind_family) in
 	    let ctx' = (Inductiveops.make_arity_signature env false ind_family) in
 	    Term.it_mkLambda_or_LetIn
