@@ -17,17 +17,22 @@ Inductive eval : tm -> val -> Prop :=
 
 Goal forall v, eval (plus (const 0) (const 1)) (nval v) -> 
           v = 1. 
-
+Proof.
 intros. 
-invert H. auto.
-simpl.  
-set (diag := fun t (v1: val) => match t with 
-                         | const _ => v = 1
-                         | plus t1 t2 => forall (X: Prop), X
-                         end). 
-refine (match H in eval t v return diag t v with 
-          | econst _ => I
-          | eplus t1 t2 n1 n2 H1 H2 => _ end _ ) .
-simpl.  admit. 
-invert H. 
-Abort. 
+invert H. exact (fun a => False_rect _).
+ intro t1; destruct t1. destruct n.
+ intro t2; destruct t2. destruct n.
+  exact (fun a b c d => False_rect _).
+ destruct n.
+  intros.
+   invert H. destruct n.
+   invert H0. destruct n. apply False_rect. destruct n.
+   reflexivity. apply False_rect.
+  exact (fun a b c d e f => False_rect _).
+  apply False_rect.
+  exact (fun a b c d e f => False_rect _).
+  exact (fun a b c d => False_rect _).
+  exact (fun a b c d => False_rect _).
+  exact (fun a b c d e => False_rect _).
+  exact (fun a b c d e => False_rect _).
+Qed.

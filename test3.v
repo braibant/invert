@@ -15,7 +15,7 @@ Section t.
         (bas: forall a: A, P (a :: []))
         (rect: forall a {n} (v: t (S n)), P v -> P (a :: v)) :  
     forall n (v: t (S n)),  P v.
-    
+    Proof.
     fix 2. intros n v.
     refine (let diag n :=
                 match n return t n -> Type with 
@@ -56,8 +56,13 @@ Section t.
       {
         apply rect.  apply rectS. 
       }
-      Restart. 
-      fix 2; intros n v. 
-      diag v D. 
-    Qed. 
-End t. 
+      Restart.
+fix 2. intros n v.
+invert v.
+apply False_rect.
+destruct n0.
+{ intros. invert X.
+apply bas. exact (fun a b c => False_rect _). }
+{ intros. apply rect. apply rectS. }
+Defined.
+End t.
