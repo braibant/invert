@@ -66,15 +66,15 @@ let rec constr' (env: Names.Name.t list) t =
       (fun c -> parens (constr' env c))
       (Array.to_list args)
   | Term.Lambda (n,ty,c) -> 
-    group (string "fun" ^/^ parens (name n ^/^ colon ^/^ constr' (n::env) ty))
-    ^/^ string "=>" 
-    ^/^ parens (constr' (n :: env) c)
+    group (group (group (string "fun" ^/^ parens (name n ^/^ colon ^/^ constr' env ty))
+    ^/^ string "=>" )
+    ^/^ parens (constr' (n :: env) c))
   | Term.Prod (n,ty,c) -> 
-    group (string "forall" ^/^ parens (name n ^/^ colon ^/^ constr' (n::env)ty))
+    group (string "forall" ^/^ parens (name n ^/^ colon ^/^ constr' env ty))
     ^/^ string "," 
     ^/^ parens (constr' (n :: env) c)
   | Term.LetIn (n,body,ty,c) -> 
-    group (string "let" ^/^ parens (name n ^/^ colon ^/^ constr' (n::env)ty))
+    group (string "let" ^/^ parens (name n ^/^ colon ^/^ constr' env ty))
     ^/^ string ":=" ^/^  group (constr' (env)c) 
     ^/^ string "in" ^/^ parens (constr' (n::env)c)
   | Term.Const c -> pp (Printer.pr_constant (Global.env ()) c)
@@ -89,6 +89,7 @@ let rec constr' (env: Names.Name.t list) t =
 	       (string "TODO")
 	       (string "end"))
     
+  | Term.Sort s -> pp (Printer.pr_sort s)
   | _ -> string "TODO"
   
   
@@ -103,5 +104,7 @@ let telescope ctx =
   brackets (aux [] ctx)
     
       
-    
+
+let messages l =     
+  separate_map hardline (fun (msg,body) -> group (string msg ^/^ body)) l
   

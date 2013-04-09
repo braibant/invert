@@ -10,7 +10,8 @@ $(call includecmdwithout@,$(COQBIN)coqtop -config)
 
 SRC:= 	print.ml print.mli \
 	context.ml context.mli telescope.ml telescope.mli \
-	invert_tactic.ml invert.ml4 \
+	invertlib.ml \
+	invert_tactic.ml invert_tactic2.ml invert.ml4 \
 	test1.v test2.v test3.v test4.v test5.v
 
 
@@ -58,8 +59,8 @@ VOFILES := $(VFILES:.v=.vo)
 all: $(CMO) $(CMX) invert.cmo invert.cmxs $(VOFILES)
 
 clean:
-	rm -f $(CMO) $(CMX) invert.cmxs
-	rm -f *.d
+	rm -f $(CMO) $(CMX) $(VOFILES) invert.cmxs
+	rm -f *.d *.
 	rm -f *.o *.cmi *.glob
 
 printenv:

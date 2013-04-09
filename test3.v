@@ -57,12 +57,50 @@ Section t.
         apply rect.  apply rectS. 
       }
       Restart.
-fix 2. intros n v.
-invert v.
-apply False_rect.
-destruct n0.
-{ intros. invert X.
-apply bas. exact (fun a b c => False_rect _). }
-{ intros. apply rect. apply rectS. }
-Defined.
+      
+      fix 2. intros n v.
+      invertp v. Show Proof. 
+      apply False_rect. 
+      destruct n0.
+      { intros. invertp X.
+        apply bas. exact (fun a b c => False_rect _). }
+      { intros. apply rect. apply rectS. } Show Proof. 
+      
+
+      Restart. 
+      fix 2. intros n v. 
+      diag v D. 
+      refine (match v in t n' return diag n' v with 
+                | [] => _
+                | cons h m q => _
+              end
+             );simpl. 
+      auto. 
+      clear diag v n. 
+      refine (match m return forall (v : t m), P m (h::v) with
+               | 0 => fun v => _ 
+               | S n => fun v => _
+             end q). 
+      {
+        diag v D.         
+        refine (match v in t n' return diag n' v with 
+                  | nil => _
+                  | cons _ _ _ => _
+                end). 
+        simpl. apply bas. 
+        simpl. auto. 
+      }
+      {
+        apply rect.  apply rectS. 
+      }
+      Show Proof. 
+      Restart. 
+      fix 2. intros n v. 
+      invert v. auto. 
+      intros. 
+      destruct n0. 
+      {invert X. apply bas.  auto. }
+      {intros. apply rect. apply rectS. }
+      
+    Defined.
 End t.

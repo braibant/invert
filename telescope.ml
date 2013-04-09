@@ -21,3 +21,9 @@ let filter_deps tel =
 let to_rel_context x = 
   List.rev x
   
+let rec lift n = function 
+  | [] -> []
+  | (name,body,ty) :: tail -> (name, Option.map (Term.lift n) body, Term.lift n ty) :: lift (succ n) tail
+
+    
+  
