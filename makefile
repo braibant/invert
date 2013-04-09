@@ -10,7 +10,10 @@ $(call includecmdwithout@,$(COQBIN)coqtop -config)
 
 SRC:= 	print.ml print.mli \
 	context.ml context.mli telescope.ml telescope.mli \
-	invert_tactic.ml invert.ml4 test.v
+	invert_tactic.ml invert.ml4 \
+	test1.v test2.v test3.v test4.v test5.v
+
+
 
 COQDEP = ${COQBIN}coqdep
 COQC = ${COQBIN}coqc
