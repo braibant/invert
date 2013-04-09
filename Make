@@ -2,7 +2,11 @@
 print.ml
 invert.ml4
 invert.mlpack
-test.v
+test1.v
+test2.v
+test3.v
+test4.v
+test5.v
 
 -custom "" print.cmo invert.cmo
 -custom "" print.cmx invert.cmx
