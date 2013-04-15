@@ -27,7 +27,7 @@ Section t.
                           end
               end
           in _ ). 
-      Set Printing All. 
+      Set Printing All.
       refine (match H in P n' v' return diag n' v' with | Pnil  => _  |Pcons n v h' h => _ end).
       simpl. auto. 
       simpl.  auto.
@@ -69,4 +69,19 @@ Section t.
   Proof. intros H. 
          invert H. auto. auto. Show Proof. 
   Qed.
+
+Definition rect2 (P:forall {n}, vector n -> vector n -> Type)
+  (bas : P nil nil) (rect : forall {n v1 v2}, @P n v1 v2 ->
+    forall a b, P (cons _ a v1) (cons _ b v2)) : forall n
+    (v1 v2 : vector n), P v1 v2.
+Proof.
+fix 2.
+intros n v1. invert v1.
+ + intros v2; invert v2. assumption. exact (fun _ _ _ => False_rect _).
+ + intros m t1 q1 v2.
+   generalize q1. invert v2. exact (False_rect _).
+   intros m' t2 q2 q1'. apply rect. apply rect2.
+Defined.
+Print rect2.
+
 End t.  
