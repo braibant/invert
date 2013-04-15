@@ -95,36 +95,6 @@ let mk_matchi env sigma ind constructor params term return_clause kt kf =
   t
 
 
-(** The return clause that we builds depends on the shape of the
-    telescope [tel]
-*)
-let filter_return_clause tel sort = 
-  Print.(eprint (group (string "telescope" ^^ telescope tel)));
-  let rec keep k acc = function 
-    | [] -> acc
-    | (_,None,ty) as decl :: q -> 
-      let realq = q in 
-      if not (Term.noccurn k ty) 
-      then			  (* k occurs *)
-	keep (succ k) (decl :: acc) realq
-      else 
-	keep (succ k) (Termops.lift_rel_context (-1) acc) realq
-    | (_,Some b,ty) as decl :: q -> 
-      let realq = q in 
-      if not (Term.noccurn k ty)  || not (Term.noccurn k b)
-      then			  (* k occurs *)
-	keep (succ k) (decl :: acc) (realq)
-      else 
-	keep (succ k) (Termops.lift_rel_context (-1) acc) realq
-  in 
-  let result = keep 1 [] tel in 
-  Print.(eprint (group (string "result" ^^ telescope result)));
-  Term.mkArity (keep 1 [] tel, sort)
-  
-
-let filter_return_clause tel sort= 
-  Term.mkArity (List.rev tel, sort)
-
 let debug (st: split_tree list) =
   let open Print in 
   let rec aux = function 
@@ -147,41 +117,17 @@ let debug (st: split_tree list) =
     st
     
        
-(* replace [Rel 1] with [c] in [stt] and lifts other de Bruijn indices
-   by [k].  *)
-let refine_stt c k (stt: Telescope.t) = 
-  let rec aux n acc = function 
-    | [] -> List.rev acc
-    | (name,None,ty)::q -> 
-      (* let t = foobar c (n+1) 0 ty in  *)
-      let t' = Term.substnl [c] n (Term.liftn (k+1) (n+2) ty)  in 
-      aux (n+1) ((name,None,t') ::acc) q
-  in 
-  let result = aux 0 [] stt in 
-  Print.(eprint (
-
-    prefix 2 2 (string "refine_stt")
-      (messages 
-	 [
-	   "c", constr' [] c;
-	   "stt", telescope stt;
-	   "result", telescope result;
-	 ])
-  ));
-  result
-
 let rev_append ctx stt = 
   let result = 
-    (* List.rev_append ctx (Telescope.lift (Term.rel_context_nhyps ctx) stt) *)
     List.rev_append ctx stt
   in 
   Print.(eprint (
     prefix 2 2 (string "rev_append") 
       (messages [
-      "ctx", rel_context ctx;
-      "stt", telescope stt;
-      "result", telescope result
-    ] )    
+	"ctx", rel_context ctx;
+	"stt", telescope stt;
+	"result", telescope result
+      ] )    
   ));
   result
 
@@ -207,7 +153,7 @@ let anti_subst_rel_context c k ctx =
   r
 
 
-(* We have to iterate the previous function for each argument *)
+(* We have to iterate the previous function for each argument of a given list *)
 let rec iter args n ctx = 
   match args with 
     | [] -> ctx
@@ -294,8 +240,17 @@ let diag env sigma (leaf_ids: Names.Id.t list)
 		   telescope by the "correct" de Bruijn variables. For
 		   instance, we have to replace (S n) by m. *)
 		
+		(* In our running example, ind_args is [S @1] and ctx is [vector @1; nat]*)
+
 		let ind_args = try  Array.to_list (snd (Term.destApp ty_argx)) with _ -> [] in 
-		
+		let ctx = Inductiveops.make_arity_signature env true ind_family in
+		  (* We need to lift the arguments by 1, to account
+		     for the "as" clause and by the number of
+		     arguments of the inductive.  *)
+		let ind_args = List.map (Term.lift (Term.rel_context_nhyps ctx - 1)) ind_args in 
+		  
+		let stt = List.rev (iter (Term.mkRel 1::ind_args) 1 (List.rev stt)) in 		
+
 		let branches =
 		  Array.mapi
 		    (fun i cs ->
@@ -329,29 +284,11 @@ let diag env sigma (leaf_ids: Names.Id.t list)
 		    )
 		    constructors
 		in 
-		(* In our running example, args is [S @1] *)
 		let return_clause = 
-		  let ctx = Inductiveops.make_arity_signature env true ind_family in
-		  (* ctx is [vector @1; nat] *)
-		  (* stt is [P (S @2) @1]. *)
-		  let debug msg f x = 
-		    Print.(eprint (group (string msg ^/^ group (f x))))
-		  in		  
-		  (* We need to lift the arguments by 1, to account for
-		     the "in" clause. *)
-		  let ind_args = List.map (Term.lift 1) ind_args in 
 		  (* Then, we must perform a replacement of the occurences of the
  		     arguments with the variables (this is the dual of a
  		     substitution). *)
-		  debug "args" (Print.(separate_map semi constr)) ind_args;
-		  debug "ctx" Print.rel_context ctx;
-		  debug "stt" Print.telescope stt;
-		  
-		  let stt = List.rev (iter (Term.mkRel 1::ind_args) 1 (List.rev stt)) in 		
-		  (* let stt = List.rev (Termops.substl_rel_context args (List.rev stt)) in *)
- 		  debug "stt" Print.telescope stt;
-		  let t = filter_return_clause (stt) concl_sort in 
-		  debug "t" Print.constr t;
+		  let t = Term.mkArity (List.rev stt,concl_sort) in 
 		  let t = Termops.it_mkLambda_or_LetIn t ctx in 
 		  t
 		in 
@@ -454,21 +391,3 @@ let invert h gl =
 
 
 
-
-(* [Rel i] is transformed into
-   
-   [c] if i = n
-   [Rel i] if i < n 
-   [Rel i + k] if i > n   
-*)
-let foobar c n k term = 
-  Print.(eprint 
-	   (prefix 2 2 (string "foobar") (messages ["c", constr c; "n", int n; "k", int k; "term", constr term])));
-  let rec subst depth term = match Term.kind_of_term term with 
-    | Term.Rel i when i = n + depth -> Term.lift depth c
-    | Term.Rel i when i < n + depth -> term
-    | Term.Rel i -> Term.mkRel (i + k) 
-    | _ -> Term.map_constr_with_binders succ subst depth term
-  in 
-  let result = subst 0 term  in 
-  Print.(eprint (constr result)); result

@@ -67,6 +67,6 @@ Section t.
   Lemma l3 n h v : 
     P (S n) (cons n h v) -> P n v.
   Proof. intros H. 
-      intros H. invert H. auto. auto. Show Proof. 
+         invert H. auto. auto. Show Proof. 
   Qed.
 End t.  

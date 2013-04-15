@@ -15,6 +15,6 @@ TACTIC EXTEND invert2
 END;;
 
 TACTIC EXTEND inver3
-| ["invertp"  ident(h)] ->     [Invert_tactic2.invert h]
+| ["invertp"  ident(h)] ->     [Invert_tactic.invert h]
 END;;
 

@@ -105,6 +105,6 @@ let telescope ctx =
     
       
 
-let messages l =     
+let messages l =
   separate_map hardline (fun (msg,body) -> group (string msg ^/^ body)) l
   
