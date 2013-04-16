@@ -131,34 +131,53 @@ let rev_append ctx stt =
   ));
   result
 
-
-
-(* replace [c] with [Rel k] in [ctx] *)
-let rec anti_subst_rel_context c k ctx = 
-  match ctx with 
-    | [] -> []
-    | (name,None,ty)::ctx -> (name, None, Termops.replace_term c (Term.mkRel k) ty) :: anti_subst_rel_context (Term.lift 1 c) (succ k) ctx
+(* replace [c] with rel [k] in [tele] *)
+let rec anti_subst_telescope c k tele =
+  match tele with 
+  | [] -> []
+  | (name,None,ty):: tele -> 
+   (name, None, Termops.replace_term c (Term.mkRel k) ty) 
+   :: anti_subst_telescope (Term.lift 1 c) (succ k) tele
 ;;
 
-let anti_subst_rel_context c k ctx =
-  let r = anti_subst_rel_context c k ctx in
-  Print.(eprint 
-	   ((string "anti_subst_rel_context") ^//^
-	       messages [ "c", constr c;
-			  "k", int k;
-			  "ctx", rel_context ctx; 
-			  "result", rel_context r])
-	   
+let anti_subst_telescope c k tele =
+  let result =  anti_subst_telescope c k tele in 
+  Print.(
+    let doc = messages 
+      [
+	"c", constr c;
+	"k", int k;
+	"tele", telescope tele;
+	"result", telescope result
+      ] in 
+    let doc = prefix 2 2 (string "anti_subst") doc  in 
+    eprint doc
   );
-  r
+  result
 
-
-(* We have to iterate the previous function for each argument of a given list *)
-let rec iter args n ctx = 
+(* [args] is telescope of the arguments; 
+   [n] should be the length of the rel_context of the arguments of the inductive *)
+let rec iter_tele args n tele = 
   match args with 
-    | [] -> ctx
-    | t::q -> iter q (succ n) (anti_subst_rel_context t n ctx)
+  | [] -> tele
+  | t :: q -> 
+    let tele = anti_subst_telescope t n tele in 
+    iter_tele q (pred n) tele
 
+let iter_tele args n tele =
+  let result = iter_tele args n tele in 
+  Print.(
+    let doc = messages 
+      [
+	"args", separate_map semi constr args;
+	"n", int n;
+	"tele", telescope tele;
+	"result", telescope result;
+      ] in 
+    let doc = prefix 2 2 (string "iter") doc  in 
+    eprint doc
+  );
+  result
 
 let diag env sigma (leaf_ids: Names.Id.t list)
     (split_trees: split_tree list) 
@@ -172,49 +191,49 @@ let diag env sigma (leaf_ids: Names.Id.t list)
       (stl : split_tree list)
       (stt: Telescope.t)
       =
-    Print.(
-      let stl = group (string "stl" ^/^ debug stl) in 
-      let stt = group (string "stt" ^/^ telescope stt) in 
-      let msg = surround 2 2 (string "begin") (stl ^^ hardline ^^ stt) (string "end") in 
-      eprint msg
-    );
+    (* Print.( *)
+    (*   let stl = group (string "stl" ^/^ debug stl) in  *)
+    (*   let stt = group (string "stt" ^/^ telescope stt) in  *)
+    (*   let msg = surround 2 2 (string "begin") (stl ^^ hardline ^^ stt) (string "end") in  *)
+    (*   eprint msg *)
+    (* ); *)
     
     match stl, stt with
-      | [], [] -> (* Not dependent inductive *)
-	let () = assert (CList.is_empty identifier_list) in
-	Print.(eprint (surround_separate_map 2 2 empty (string "substitution:" ^^ lbrace) (break 1) rbrace
-			 (fun (i,t) -> group (id i ^/^ string "=>" ^/^ constr t))
-			 subst
-	));
-	let term = Term.replace_vars subst (Term.lift shift concl) in 
-	term
-      | ll, ((_,Some _,_) as decl)::stt ->      
-	Printf.eprintf "Warning: constructor with let_ins in inversion/build.\n";
-	let term = build env subst shift identifier_list stl stt in 
-	Term.mkLambda_or_LetIn decl (Term.lift 1 term) 
-      | head::ll, ((name_argx,None,ty_argx) as decl) ::stt ->
-	let lift_subst = List.map (fun (id, tm) -> (id, Term.lift 1 tm)) subst in
+    | [], [] -> (* Not dependent inductive *)
+      let () = assert (CList.is_empty identifier_list) in
+      Print.(eprint (surround_separate_map 2 2 empty (string "substitution:" ^^ lbrace) (break 1) rbrace
+		       (fun (i,t) -> group (id i ^/^ string "=>" ^/^ constr t))
+		       subst
+      ));
+      let term = Term.replace_vars subst (Term.lift shift concl) in 
+      term
+    | ll, ((_,Some _,_) as decl)::stt ->      
+      Printf.eprintf "Warning: constructor with let_ins in inversion/build.\n";
+      let term = build env subst shift identifier_list stl stt in 
+      Term.mkLambda_or_LetIn decl (Term.lift 1 term) 
+    | head::ll, ((name_argx,None,ty_argx) as decl) ::stt ->
+      let lift_subst = List.map (fun (id, tm) -> (id, Term.lift 1 tm)) subst in
 	(* The first thing to do is to introduce the variable we are
 	   working on.  
 	   
 	   This variable as type [ty_argx] == [I pi ai]. 
 
 	*)
-	Term.mkLambda_or_LetIn decl 
-	  (
-	    match head with 	       
-	      | None ->
-		begin match identifier_list with
-		  | [] -> Errors.anomaly (Pp.str "build: Less variable than split_tree leaves")
-		  |id_h :: id_q ->
-		    build env ((id_h, Term.mkRel 1) :: lift_subst) (succ shift) id_q ll stt   
-		end
-	      | Some (ind, constructor, params, split_trees) ->
-		let ind_family = Inductiveops.make_ind_family (ind, params) in
-		let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in
-		let (constructors: Inductiveops.constructor_summary array) =
-		  Inductiveops.get_constructors env ind_family in
-
+      Term.mkLambda_or_LetIn decl 
+	(
+	  match head with 	       
+	  | None ->
+	    begin match identifier_list with
+	    | [] -> Errors.anomaly (Pp.str "build: Less variable than split_tree leaves")
+	    |id_h :: id_q ->
+	      build env ((id_h, Term.mkRel 1) :: lift_subst) (succ shift) id_q ll stt   
+	    end
+	  | Some (ind, constructor, params, split_trees) ->
+	    let ind_family = Inductiveops.make_ind_family (ind, params) in
+	    let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in
+	    let (constructors: Inductiveops.constructor_summary array) =
+	      Inductiveops.get_constructors env ind_family in
+	    
 		(* We need to build the return clause and the branches.
 		   
 		   Let's take the example where we match on v: vector (S
@@ -239,61 +258,74 @@ let diag env sigma (leaf_ids: Names.Id.t list)
 		   the occurences of the arguments of the inductive in the
 		   telescope by the "correct" de Bruijn variables. For
 		   instance, we have to replace (S n) by m. *)
-		
+	    
 		(* In our running example, ind_args is [S @1] and ctx is [vector @1; nat]*)
 
-		let ind_args = try  Array.to_list (snd (Term.destApp ty_argx)) with _ -> [] in 
-		let ctx = Inductiveops.make_arity_signature env true ind_family in
-		  (* We need to lift the arguments by 1, to account
-		     for the "as" clause and by the number of
-		     arguments of the inductive.  *)
-		let ind_args = List.map (Term.lift (Term.rel_context_nhyps ctx - 1)) ind_args in 
-		  
-		let stt = List.rev (iter (Term.mkRel 1::ind_args) 1 (List.rev stt)) in 		
-
-		let branches =
-		  Array.mapi
-		    (fun i cs ->
-		      (* substitude the matched term (Rel 1) by the constructor in the branch we are *)
-		      let args = Inductiveops.build_dependent_constructor cs
-			:: Array.to_list cs.Inductiveops.cs_concl_realargs in 
-		      let stt = List.rev (Termops.substl_rel_context args (List.rev stt)) in
-		      (* let stt = List.rev (iter (args) 1 (List.rev stt)) in 		 *)
-		      let branch_body =
-			if i + 1 = constructor
-			then
-			  begin
-			    let env' = Environ.push_rel_context cs.Inductiveops.cs_args env in
-			    let term =
-			      build env' lift_subst 
-				(succ shift)
-				identifier_list
-				(split_trees@ll)
-				(List.rev_append cs.Inductiveops.cs_args stt)
-			    in
-			    term
-			  end
-			else
-			  (* otherwise, in the underscore case, we return
-			     [False -> True] *)
-			  Term.it_mkLambda_or_LetIn
-			    devil
-			    (List.rev_append stt cs.Inductiveops.cs_args)
- 		      in
-		      branch_body
-		    )
-		    constructors
-		in 
-		let return_clause = 
+	    let ind_args = try  Array.to_list (snd (Term.destApp ty_argx)) with _ -> [] in 
+	    let ctx = Inductiveops.make_arity_signature env true ind_family in
+		(* We need to lift the arguments by 1, to account
+		   for the "as" clause and by the number of
+		   arguments of the inductive.  *)
+	    let _ = 
+	      Print.(
+		let doc = messages 
+		  [
+		    "ind_args", separate_map semi constr ind_args;
+		    "ctx", rel_context ctx
+		  ]
+		in eprint doc
+	      )
+	    in 
+	    (* We must lift the arguments of the inductive by 1 to
+	       account for the [fun decl] that we introduced above. *)
+	    let ind_args = List.map (Term.lift 1) ind_args in 	    
+	    let stt =
+	      let n = (Term.rel_context_nhyps ctx) in 
+	      iter_tele (List.map (Term.lift n) ind_args) n (Telescope.lift_above 2 n stt)
+	    in 		
+	    
+	    let branches =
+	      Array.mapi
+		(fun i cs ->
+		  (* substitude the matched term (Rel 1) by the constructor in the branch we are *)
+		  let args = Inductiveops.build_dependent_constructor cs
+		    :: Array.to_list cs.Inductiveops.cs_concl_realargs in 
+		  let stt = List.rev (Termops.substl_rel_context args (List.rev stt)) in
+		  let branch_body =
+		    if i + 1 = constructor
+		    then
+		      begin
+			let env' = Environ.push_rel_context cs.Inductiveops.cs_args env in
+			let term =
+			  build env' lift_subst 
+			    (succ shift)
+			    identifier_list
+			    (split_trees@ll)
+			    (List.rev_append cs.Inductiveops.cs_args stt)
+			in
+			term
+		      end
+		    else
+		      (* otherwise, in the underscore case, we return
+			 [False -> True] *)
+		      Term.it_mkLambda_or_LetIn
+			devil
+			(List.rev_append stt cs.Inductiveops.cs_args)
+ 		  in
+		  branch_body
+		)
+		constructors
+	    in 
+	    let return_clause = 
 		  (* Then, we must perform a replacement of the occurences of the
  		     arguments with the variables (this is the dual of a
  		     substitution). *)
-		  let t = Term.mkArity (List.rev stt,concl_sort) in 
-		  let t = Termops.it_mkLambda_or_LetIn t ctx in 
-		  t
-		in 
-		Term.mkCase (case_info,return_clause,Term.mkRel 1,branches)
-	  )
+	      let t = Term.mkArity (List.rev stt,concl_sort) in 
+	      let t = Termops.it_mkLambda_or_LetIn t ctx in 
+	      t
+	    in 
+	    Term.mkCase (case_info,return_clause,Term.mkRel 1,branches)
+	)
   in
   build env  [] 0 leaf_ids  split_trees split_tree_types 
 
@@ -341,7 +373,7 @@ let invert h gl =
     Array.map
       (fun cs ->
 	let ctx = cs.Inductiveops.cs_args in 
-	Print.(eprint (group (string "branches/ctx" ^/^ group (rel_context ctx))));
+	(* Print.(eprint (group (string "branches/ctx" ^/^ group (rel_context ctx)))); *)
 	let t = Term.mkApp (diag, cs.Inductiveops.cs_concl_realargs) in
 	let t = Term.mkApp (t, [| Inductiveops.build_dependent_constructor cs |]) in
 	let ty = Term.it_mkProd_or_LetIn t ctx in 
@@ -351,6 +383,7 @@ let invert h gl =
       )
       constructors
   in
+  Print.(eprint (stripes( string "final diag") ^/^ constr diag));
   cps_mk_letin "diag" diag
     (fun diag ->
       let branches = branches (Term.mkVar diag) in

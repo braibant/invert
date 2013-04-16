@@ -31,6 +31,7 @@ let name   = function
   | Names.Name x -> id x
     
 let constrs l = separate_map hardline constr l
+
 let rel_context ctx = 
   surround_separate_map 2 1
     (brackets empty) 				(* when void *)
@@ -38,7 +39,7 @@ let rel_context ctx =
     (semi ^^ break 1)
     rbracket
     (fun (n, _, ty) -> 
-      name n ^/^ colon ^/^ constr ty
+      prefix 1 2 (name n ^/^ colon) (constr ty)
     )
     (
       ctx
@@ -102,9 +103,7 @@ let telescope ctx =
       ^^ aux (n::env) q
   in 
   brackets (aux [] ctx)
-    
-      
-
+          
 let messages l =
   separate_map hardline (fun (msg,body) -> group (string msg ^/^ body)) l
   

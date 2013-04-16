@@ -55,6 +55,7 @@ CMO:= $(MLFILES:.ml=.cmo) $(MLPACKFILES:.mlpack=.cmo) $(ML4FILES:.ml4=.cmo)
 CMX:= $(MLFILES:.ml=.cmx) $(MLPACKFILES:.mlpack=.cmx) $(ML4FILES:.ml4=.cmx)
 CMIFILES=$(CMO:.cmo=.cmi)
 VOFILES := $(VFILES:.v=.vo)
+CMXS := invert.cmxs 
 
 all: $(CMO) $(CMX) invert.cmo invert.cmxs $(VOFILES)
 
@@ -62,6 +63,7 @@ clean:
 	rm -f $(CMO) $(CMX) $(VOFILES) invert.cmxs
 	rm -f *.d *.
 	rm -f *.o *.cmi *.glob
+	rm -f *.cmxs *.native
 
 printenv:
 	@echo 'PP =	$(PP)'
@@ -96,5 +98,5 @@ printenv:
 %.v.d: %.v
 	$(COQDEP) -slash $(COQLIBS) "$<" > "$@" 
 
-%.vo %.glob: %.v
+%.vo %.glob: %.v $(CMXS)
 	$(COQC) $(COQDEBUG) $(COQFLAGS) $*

@@ -21,9 +21,16 @@ let filter_deps tel =
 let to_rel_context x = 
   List.rev x
   
-let rec lift n = function 
-  | [] -> []
-  | (name,body,ty) :: tail -> (name, Option.map (Term.lift n) body, Term.lift n ty) :: lift (succ n) tail
+let lift n tele = 
+  List.rev (Termops.lift_rel_context n (List.rev tele ))
 
+(* lift all de Bruijn indices above or equal to [k] by [n] *)
+let lift_above k n tele =
+  let rec aux k = function 
+    | [] -> []
+    | decl :: q -> 
+      Term.map_rel_declaration (Term.liftn n k) decl :: aux (succ k) q
+  in 
+  aux k tele
     
   

@@ -5,13 +5,13 @@ Section t.
   Variable A : Type.
   
   Inductive vector: nat ->  Type :=
-    |   nil : vector 0
-    | cons : forall n : nat, forall x : A, forall v : vector n, vector (S n).
-
+  | nil : vector 0
+  | cons : forall n : nat, forall x : A, forall v : vector n, vector (S n).
+  
   Inductive P : forall n:nat, vector n -> Type :=
-    | Pnil : P 0 nil
-    | Pcons : forall n v, P n v -> forall h, P (S n) (cons n h v). 
-    
+  | Pnil : P 0 nil
+  | Pcons : forall n v, P n v -> forall h, P (S n) (cons n h v). 
+  
   Lemma l0 n h v: 
     P (S n) (cons n h v) -> P n v.
       intros H.
@@ -64,10 +64,13 @@ Section t.
       auto. simpl. auto. 
       Show Proof. 
   Qed. 
+  
   Lemma l3 n h v : 
     P (S n) (cons n h v) -> P n v.
-  Proof. intros H. 
-         invert H. auto. auto. Show Proof. 
+  Proof. intros H.
+         invert H. 
+         auto. 
+         auto. Show Proof. 
   Qed.
 
 Definition rect2 (P:forall {n}, vector n -> vector n -> Type)
