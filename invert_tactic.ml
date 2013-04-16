@@ -196,12 +196,12 @@ let diag env sigma (leaf_ids: Names.Id.t list)
       (stt: Telescope.t)
       
       =
-    (* Print.( *)
-    (*   let stl = group (string "stl" ^/^ debug stl) in  *)
-    (*   let stt = group (string "stt" ^/^ telescope stt) in  *)
-    (*   let msg = surround 2 2 (string "begin") (stl ^^ hardline ^^ stt) (string "end") in  *)
-    (*   eprint msg *)
-    (* ); *)
+    Print.(
+      let stl = group (string "stl" ^/^ debug stl) in
+      let stt = group (string "stt" ^/^ telescope stt) in
+      let msg = surround 2 2 (string "begin") (stl ^^ hardline ^^ stt) (string "end") in
+      eprint msg
+    );
     
     match stl, stt with
     | [], [] -> (* Not dependent inductive *)
@@ -293,16 +293,16 @@ let diag env sigma (leaf_ids: Names.Id.t list)
 	       with the arguments of the type of [decl] and the
 	       conclusion being the [stt] *)
 	    let return_clause = 
-	      (* let split_trees,leaves = make_a_pattern env sigma ind_args in  *)
-	      
-	      (* (\* morally, this is prepare_conclusion_type *\) *)
-	      (* let vars = List.map (function LVar x -> x) leaves in  *)
-	      (* let concl =  *)
+	      let split_trees,leaves = make_a_pattern env sigma ind_args in	      
+	      (* morally, this is prepare_conclusion_type *)
+	      let vars = List.map (function LVar x -> x) leaves in
+	      let concl =
 		let t = Term.mkArity (List.rev stt,concl_sort) in 
 		let t = Termops.it_mkLambda_or_LetIn t ctx in 
 		t       
-	      (* in  *)
-	    (* build env [] 0 vars split_trees leaves *)
+	      in
+	      let ctx = Inductiveops.make_arity_signature env false ind_family in	      
+	      build env [] 0 concl vars split_trees (List.rev ctx)
 	    in 
 	    let branches =
 	      Array.mapi
