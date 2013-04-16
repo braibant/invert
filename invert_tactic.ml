@@ -28,7 +28,7 @@ type split_tree_leaf =
     Note: the split_tree_leaf list corresponds to a telescope: that
     is, the most recent binder is a the end of the list.
 *)
-let make_a_pattern env sigma args : split_tree list * split_tree_leaf list =
+let make_a_pattern env sigma (args: Term.constr list) : split_tree list * split_tree_leaf list =
   let rec aux t vars =
     let (hd,tl) = Reductionops.whd_betadeltaiota_stack env sigma t in
     match Term.kind_of_term hd with
@@ -54,11 +54,11 @@ let make_a_pattern env sigma args : split_tree list * split_tree_leaf list =
 *)
 let prepare_conclusion_type gl leaves =
   let vars = List.map (function LVar x -> x) leaves in 
- let concl = Tacmach.pf_concl gl in
+  let concl = Tacmach.pf_concl gl in
   (vars,
    [||],
    concl)
-
+    
 
 let devil =
   Term.mkProd
@@ -66,6 +66,8 @@ let devil =
      Util.delayed_force Coqlib.build_coq_False,
      Util.delayed_force Coqlib.build_coq_True)
 
+let false_rect = 
+  lazy (Coqlib.coq_constant "Invert" ["Coq"; "Init"; "Logic"] "False_rect")
 
 
 (* Given an inductive I, and a constructor C, build the match that
@@ -190,6 +192,7 @@ let diag env sigma (leaf_ids: Names.Id.t list)
       identifier_list
       (stl : split_tree list)
       (stt: Telescope.t)
+      
       =
     (* Print.( *)
     (*   let stl = group (string "stl" ^/^ debug stl) in  *)
@@ -213,12 +216,11 @@ let diag env sigma (leaf_ids: Names.Id.t list)
       Term.mkLambda_or_LetIn decl (Term.lift 1 term) 
     | head::ll, ((name_argx,None,ty_argx) as decl) ::stt ->
       let lift_subst = List.map (fun (id, tm) -> (id, Term.lift 1 tm)) subst in
-	(* The first thing to do is to introduce the variable we are
-	   working on.  
-	   
-	   This variable as type [ty_argx] == [I pi ai]. 
-
-	*)
+      (* The first thing to do is to introduce the variable we are
+	 working on.  
+	 
+	 This variable as type [ty_argx] == [I pi ai]. 
+      *)
       Term.mkLambda_or_LetIn decl 
 	(
 	  match head with 	       
@@ -234,38 +236,38 @@ let diag env sigma (leaf_ids: Names.Id.t list)
 	    let (constructors: Inductiveops.constructor_summary array) =
 	      Inductiveops.get_constructors env ind_family in
 	    
-		(* We need to build the return clause and the branches.
-		   
-		   Let's take the example where we match on v: vector (S
-		   n), to build the predicate P (S n) v
-		   
-		   There are two possibilities for  the return clause.	      
+	    (* We need to build the return clause and the branches.
+	       
+	       Let's take the example where we match on v: vector (S
+	       n), to build the predicate P (S n) v
+	       
+	       There are two possibilities for  the return clause.	      
 
-		   First, consider: fun m => fun (v: vector m) => P m v -> Type
-		   
-		   In that case, the branches should be :
-		   nil => fun _ : P 0 nil => ...
-		   cons m x q =>  fun _ : P (S m) (cons m x q) => ...
-		   
-		   Another possibility for the return clause is:
-		   fun m => fun v => match m with 0 => False -> True | S m => P (S m) v -> Type end
+	       First, consider: fun m => fun (v: vector m) => P m v -> Type
+	       
+	       In that case, the branches should be :
+	       nil => fun _ : P 0 nil => ...
+	       cons m x q =>  fun _ : P (S m) (cons m x q) => ...
+	       
+	       Another possibility for the return clause is:
+	       fun m => fun v => match m with 0 => False -> True | S m => P (S m) v -> Type end
 
-		   In that case the branches should be:
-		   nil => False -> True
-		   cons m x q : vector (S m) => P (S m) (cons m x q)  
-		   
-		   Let's implement the first strategy: we have to replace
-		   the occurences of the arguments of the inductive in the
-		   telescope by the "correct" de Bruijn variables. For
-		   instance, we have to replace (S n) by m. *)
+	       In that case the branches should be:
+	       nil => False -> True
+	       cons m x q : vector (S m) => P (S m) (cons m x q)  
+	       
+	       Let's implement the first strategy: we have to replace
+	       the occurences of the arguments of the inductive in the
+	       telescope by the "correct" de Bruijn variables. For
+	       instance, we have to replace (S n) by m. *)
 	    
-		(* In our running example, ind_args is [S @1] and ctx is [vector @1; nat]*)
-
+	    (* In our running example, ind_args is [S @1] and ctx is [vector @1; nat]*)
 	    let ind_args = try  Array.to_list (snd (Term.destApp ty_argx)) with _ -> [] in 
+	    
+	    (* [ctx] is the (dependent) arity of the inductive we
+	       destruct on. *)
 	    let ctx = Inductiveops.make_arity_signature env true ind_family in
-		(* We need to lift the arguments by 1, to account
-		   for the "as" clause and by the number of
-		   arguments of the inductive.  *)
+	    
 	    let _ = 
 	      Print.(
 		let doc = messages 
@@ -282,8 +284,13 @@ let diag env sigma (leaf_ids: Names.Id.t list)
 	    let stt =
 	      let n = (Term.rel_context_nhyps ctx) in 
 	      iter_tele (List.map (Term.lift n) ind_args) n (Telescope.lift_above 2 n stt)
-	    in 		
-	    
+	    in 	
+
+	    let return_clause = 
+	      let t = Term.mkArity (List.rev stt,concl_sort) in 
+	      let t = Termops.it_mkLambda_or_LetIn t ctx in 
+	      t       
+	    in 
 	    let branches =
 	      Array.mapi
 		(fun i cs ->
@@ -291,7 +298,28 @@ let diag env sigma (leaf_ids: Names.Id.t list)
 		  let args = Inductiveops.build_dependent_constructor cs
 		    :: Array.to_list cs.Inductiveops.cs_concl_realargs in 
 		  let stt = List.rev (Termops.substl_rel_context args (List.rev stt)) in
-		  let branch_body =
+
+		  (** We may instantiate the body of the branch by the
+		      daemon, based on the following idea.
+
+		      We normalize the application of the return
+		      clause to the arguments of the current branch:
+		      this yields a rel_context and a term. If the
+		      rel_context contains False, it means that we can
+		      instantiate this branch with False_rect.		      
+		  *)
+		  
+		  let elim_body = 
+		    let app = Term.mkApp (return_clause, Array.of_list (List.rev args)) in   
+		    let (ctx,concl) = Reductionops.splay_prod_assum env sigma app in
+		    match ctx with 
+		    | [] -> None
+		    | (_,_,ty) :: q  when Reductionops.is_conv env sigma ty (Util.delayed_force Coqlib.build_coq_False)   -> Some (ctx,concl)
+		    | _ -> None
+		    
+		  in 
+		  
+		  let real_body =
 		    if i + 1 = constructor
 		    then
 		      begin
@@ -311,19 +339,14 @@ let diag env sigma (leaf_ids: Names.Id.t list)
 		      Term.it_mkLambda_or_LetIn
 			devil
 			(List.rev_append stt cs.Inductiveops.cs_args)
- 		  in
-		  branch_body
+ 		  in	      
+		  match elim_body with 
+		  | None -> real_body
+		  | Some (ctx,q) -> 
+		    Term.it_mkLambda_or_LetIn  (Term.mkApp (Lazy.force false_rect, [|q; Term.mkRel 1|])) ctx
 		)
 		constructors
-	    in 
-	    let return_clause = 
-		  (* Then, we must perform a replacement of the occurences of the
- 		     arguments with the variables (this is the dual of a
- 		     substitution). *)
-	      let t = Term.mkArity (List.rev stt,concl_sort) in 
-	      let t = Termops.it_mkLambda_or_LetIn t ctx in 
-	      t
-	    in 
+	    in 	    
 	    Term.mkCase (case_info,return_clause,Term.mkRel 1,branches)
 	)
   in
