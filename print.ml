@@ -93,7 +93,9 @@ let rec constr' (env: Names.Name.t list) t =
   | Term.Sort s -> pp (Printer.pr_sort s)
   | _ -> string "TODO"
   
-  
+
+let constr' env x = try constr' env x with _ -> assert false
+
 let telescope ctx = 
   let rec aux env = function 
     | [] -> empty
