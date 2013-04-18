@@ -162,20 +162,20 @@ let rec anti_subst_telescope c k tele =
    :: anti_subst_telescope (Term.lift 1 c) (succ k) tele
 ;;
 
-let anti_subst_telescope c k tele =
-  let result =  anti_subst_telescope c k tele in 
-  Print.(
-    let doc = messages 
-      [
-	"c", constr c;
-	"k", int k;
-	"tele", telescope tele;
-	"result", telescope result
-      ] in 
-    let doc = prefix 2 2 (string "anti_subst") doc  in 
-    eprint doc
-  );
-  result
+(* let anti_subst_telescope c k tele = *)
+(*   let result =  anti_subst_telescope c k tele in  *)
+(*   Print.( *)
+(*     let doc = messages  *)
+(*       [ *)
+(* 	"c", constr c; *)
+(* 	"k", int k; *)
+(* 	"tele", telescope tele; *)
+(* 	"result", telescope result *)
+(*       ] in  *)
+(*     let doc = prefix 2 2 (string "anti_subst") doc  in  *)
+(*     eprint doc *)
+(*   ); *)
+(*   result *)
 
 (* [args] is telescope of the arguments; 
    [n] should be the length of the rel_context of the arguments of the inductive *)
@@ -311,21 +311,39 @@ let diag env sigma (leaf_ids: name list)
 	    let return_clause = 
 	      let split_trees,leaves = make_a_pattern env sigma ind_args in	      
 	      (* morally, this is prepare_conclusion_type *)
-	      let vars = List.map (function LVar x -> Var x | LRel x -> Rel x) leaves in
+	      let vars' = List.map (function LVar x -> Var x | LRel x -> Rel x) leaves in
 	      let concl =
-		let t = Term.mkArity (List.rev stt,concl_sort) in 
-		let t = Termops.it_mkLambda_or_LetIn t ctx in 
-		t       
+		let t = Term.mkArity (List.rev stt,concl_sort) in
+		(* let t = Termops.it_mkLambda_or_LetIn t ctx in *)
+		t
 	      in
-	      let ctx = Inductiveops.make_arity_signature env false ind_family in	      
-	      let result  = build env [] 0 concl vars split_trees (List.rev ctx) in 
+	      let ctx' = Inductiveops.make_arity_signature env false ind_family in	      
+	      Print.(
+		let name = function 
+		  | Rel i -> string "@" ^^ int i
+		  | Var v -> id v
+		in
+		let doc = messages
+		  [
+		    "stt", telescope stt;
+		    "vars", separate_map semi name identifier_list;
+		    "ctx", rel_context ctx;
+		    "split_trees", debug split_trees;
+		    "leaves", separate_map semi name vars';
+		    "ctx'", rel_context ctx';
+		    "concl", constr concl
+ 		  ]
+		in eprint (prefix 2 2 (string "return_clause_call") doc)
+	      );
+	      let result  = build env [] 0 concl (vars') (split_trees) (List.rev ctx') in 
 	      Print.(
 		let doc = messages 
-		  ["concl", constr concl;
-		   "result", constr result
+		  [
+		    "result", constr result
 		  ]
 		in eprint (prefix 2 2 (string "return_clause") doc)
 	      );
+	      let result = Termops.it_mkLambda_or_LetIn result ctx in
 	      result
 
 	    in 
@@ -354,7 +372,7 @@ let diag env sigma (leaf_ids: name list)
 		    | [] -> None
 		    | (_,_,ty) :: q  when Reductionops.is_conv env sigma ty (Util.delayed_force Coqlib.build_coq_False)   -> Some (ctx,concl)
 		    | _ -> None
-		    
+		      
 		  in 
 		  
 		  let real_body =
