@@ -16,25 +16,24 @@ Section t.
     P (S n) (cons n h v) -> P n v.
   Proof. 
     refine (
-        let diag := (fun n : nat =>
+        let diag :=(fun n : nat =>
  match n as n0 return (forall (v : vector n0) (_ : P n0 v), Type) with
  | O => fun (v : vector O) (_ : P O v) => forall _ : False, True
  | S x =>
      fun v : vector (S x) =>
      match
-       v as w in (vector n0)
+       v as v0 in (vector n0)
        return
-         match n0 as n1 return (forall _ : vector n1, Type) with
-         | O => fun _ : vector O => forall _ : False, True
-         | S x0 => fun v0 : vector (S x0) => forall _ : P (S x0) v0, Type
-         end w
+         (match n0 as n1 return (forall _ : vector n1, Type) with
+          | O => fun _ : vector O => forall _ : False, True
+          | S x0 => fun v1 : vector (S x0) => forall _ : P (S x0) v1, Type
+          end v0)
      with
      | nil => fun H : False => False_rect True H
      | cons n0 x0 v0 => fun _ : P (S n0) (cons n0 x0 v0) => P n0 v0
      end
- end) in _
-      ).
-    intros H. refine (match H in P n' v' return diag n' v' H with | Pnil  => _  |Pcons n v h' h => _ end); simpl. 
+ end) in _ ). 
+        intros H. refine (match H in P n' v' return diag n' v' H with | Pnil  => _  |Pcons n v h' h => _ end); simpl. 
     auto. auto. 
   Qed. 
 
@@ -88,6 +87,7 @@ Section t.
       refine (match H in P n' v' return diag n' v' H with | Pnil  => _  |Pcons n v h' h => _ end).
       simpl. 
       auto. simpl. auto. 
+      Set Printing Universes. 
       Show Proof. 
   Qed. 
   
