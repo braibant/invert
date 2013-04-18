@@ -1,22 +1,36 @@
 open Invertlib
 
-type name =
-| Var of Names.Id.t
-| Rel of int 
+module Subst = struct
 
-type subst = (name * Term.constr) list
-
-let rec lift_subst n = function 
-  | [] -> []
-  | (Var name, t) :: q -> (Var name, Term.lift n t) :: lift_subst n q
-  | (Rel i, t) :: q -> (Rel (i + n), Term.lift n t) :: lift_subst n q
-  
-let rec replace subst term = match subst with 
-  | [] -> term
-  | (Var name, t) :: q -> replace q (Term.replace_vars [name,t] term)
-  | (Rel i, t) :: q-> replace q (Termops.replace_term (Term.mkRel i) t term)
     
+  type name =
+  | Var of Names.Id.t
+  | Rel of int 
+      
+  let eq_name = (=)
+    
+  type t = (name * Term.constr) list
 
+  let name = let open Print in 
+	     function 
+	     | Rel i -> string "@" ^^ int i
+	     | Var v -> id v
+	       
+  let lift_name n = function 
+    | Var name -> Var name
+    | Rel i -> Rel (i + n)
+      
+  let rec lift n = function 
+    | [] -> []
+    | (Var name, t) :: q -> (Var name, Term.lift n t) :: lift n q
+    | (Rel i, t) :: q -> (Rel (i + n), Term.lift n t) :: lift n q
+      
+  let rec apply subst term = match subst with 
+    | [] -> term
+    | (Var name, t) :: q -> apply q (Term.replace_vars [name,t] term)
+    | (Rel i, t) :: q-> apply q (Termops.replace_term (Term.mkRel i) t term)
+      
+end
 
 type split_tree =
   ((Names.inductive * int (* constructor number *) *
@@ -77,7 +91,7 @@ let make_a_pattern env sigma args =
     on an element of split_tree_leave to get the real conclusion
 *)
 let prepare_conclusion_type gl leaves =
-  let vars = List.map (function LVar x -> Var x | LRel x -> Rel x) leaves in 
+  let vars = List.map (function LVar x -> Subst.Var x | LRel x -> Subst.Rel x) leaves in 
   let concl = Tacmach.pf_concl gl in
   (vars,
    [||],
@@ -205,22 +219,23 @@ let iter_tele args n tele =
   );
   result
 
-let subst_name = let open Print in 
-	   function 
-	   | Rel i -> string "@" ^^ int i
-	   | Var v -> id v
+
+
+let new_sort env ind_family =   
+  let (_,sort_family) = Inductiveops.get_arity env ind_family in
+  let sort = Termops.new_sort_in_family sort_family in 
+  sort
 	     
 
-let diag env sigma (leaf_ids: name list)
+let diag env sigma (leaf_ids: Subst.name list)
     (split_trees: split_tree list) 
     (split_tree_types: Telescope.t)
     (concl: Term.constr) =
 
+  (* The identifier list, the split tree list, and the typing telescope are all in the same order *)
   let rec build env 
-      (subst: subst)
-      shift
       concl
-      (identifier_list: name list)
+      (identifier_list: Subst.name list)
       (stl : split_tree list)
       (stt: Telescope.t)
       =
@@ -228,8 +243,8 @@ let diag env sigma (leaf_ids: name list)
       let doc = messages 
 	["stl", debug stl;
 	 "stt", telescope stt;
-	 "ids", separate_map semi subst_name identifier_list;
-	 "shift", int shift;
+	 "ids", separate_map semi Subst.name identifier_list;
+	 "concl", constr concl
 	]
       in      
       let msg = surround 2 2 (string "begin") doc (string "end") in
@@ -238,14 +253,14 @@ let diag env sigma (leaf_ids: name list)
     
     match stl, stt with
     | [], [] -> (* Not dependent inductive *)
-      (* let () = assert (CList.is_empty identifier_list) in *)
-      replace subst ( Term.lift shift concl)
+      let () = assert (CList.is_empty identifier_list) in
+      concl
     | ll, ((_,Some _,_) as decl)::stt ->      
       Printf.eprintf "Warning: constructor with let_ins in inversion/build.\n";
-      let term = build env subst shift concl identifier_list stl stt in 
+      let term = build env concl identifier_list stl stt in 
       Term.mkLambda_or_LetIn decl (Term.lift 1 term) 
     | head::ll, ((name_argx,None,ty_argx) as decl) ::stt ->
-      let subst = lift_subst 1 subst in
+      (* let subst = lift_subst 1 subst in *)
       (* The first thing to do is to introduce the variable we are
 	 working on.  
 	 
@@ -258,7 +273,8 @@ let diag env sigma (leaf_ids: name list)
 	    begin match identifier_list with
 	    | [] -> Errors.anomaly (Pp.str "build: Less variable than split_tree leaves")
 	    |id_h :: id_q ->
-	      build env ((id_h, Term.mkRel 1) :: subst) (succ shift) concl id_q ll stt   
+	      build env (Subst.apply [id_h, Term.mkRel 1] (Term.lift 1 concl)) 
+		(List.map (fun x -> if Subst.eq_name x id_h then Subst.Rel 1 else Subst.lift_name 1 x) id_q) ll stt
 	    end
 	  | Some (ind, constructor, params, split_trees) ->
 	    let ind_family = Inductiveops.make_ind_family (ind, params) in
@@ -308,57 +324,65 @@ let diag env sigma (leaf_ids: name list)
 		in eprint doc
 	      )
 	    in 
-	    (* We must lift the arguments of the inductive by 1 to
+	    (* Then, we refine the [stt] to take into account the
+	       generalization of the [match ... as ... in ...]. First,
+	       we must lift the arguments of the inductive by 1 to
 	       account for the [fun decl] that we introduced above. *)
 	    let stt =
 	      let ind_args = List.map (Term.lift 1) ind_args in 	    
 	      let n = (Term.rel_context_nhyps ctx) in 
 	      iter_tele (List.map (Term.lift n) ind_args) n (Telescope.lift_above 2 n stt)
 	    in 	
-
+	    
+	    (* At this point, we wonder what is the equivalent of the
+	       above transformation on the conclusion. *)
+	    
+	    
 	    (* We transform the return clause in a recursive call to
 	       [build]: we start by making a call to make_a_pattern
 	       with the arguments of the type of [decl] and the
 	       conclusion being the [stt]. First, we must substitute
 	       fresh variables for each de Bruijn indices. *)
+
 	    let return_clause = 
-	      let env = Environ.push_rel_context ctx  env in
-	      let split_trees,leaves = make_a_pattern env sigma (ind_args@[Term.mkRel 1]) in	      
-	      (* morally, this is prepare_conclusion_type *)
-	      let vars' = List.map (function LVar x -> Var x | LRel x -> Rel x) leaves in
-	      let concl =
-		let concl_sort = Termops.new_Type_sort () in 
-		let t = Term.mkArity (List.rev stt,concl_sort) in
-		t
-	      in
-	      (* let ctx' = Inductiveops.make_arity_signature env false ind_family in	       *)
-	      Print.(
-		let doc = messages
-		  [
-		    "stt", telescope stt;
-		    "vars", separate_map semi subst_name identifier_list;
-		    "ctx", rel_context ctx;
-		    "split_trees", debug split_trees;
-		    "leaves", separate_map semi subst_name vars';
-		    (* "ctx'", rel_context ctx'; *)
-		    "concl", constr concl
- 		  ]
-		in eprint (prefix 2 2 (string "return_clause_call") doc)
-	      );
-	      let result  = build env [] 0 concl (vars') (split_trees) (List.rev ctx) in 
-	      Print.(
-		let doc = messages 
-		  [
-		    "result", constr result;
-		  ]
-		in eprint (prefix 2 2 (string "return_clause") doc)
-	      );
-	      (* let result = Term.mkApp (result, Termops.extended_rel_vect 0 ctx) in *)
-	      result;
-	    (* let concl_sort = Termops.new_Type_sort () in  *)
-	      (* let t = Term.mkArity (List.rev stt ,concl_sort) in *)
-	      (* let t = Termops.it_mkLambda_or_LetIn t ctx in *)
-	      (* t *)
+	      (* let env = Environ.push_rel_context ctx  env in *)
+	      (* let split_trees,leaves = make_a_pattern env sigma (ind_args@[Term.mkRel 1]) in	       *)
+	      (* (\* morally, this is prepare_conclusion_type *\) *)
+	      (* let vars' = List.map (function LVar x -> Var x | LRel x -> Rel x) leaves in *)
+	      (* let concl = *)
+	      (* 	let concl_sort = Termops.new_Type_sort () in  *)
+	      (* 	let t = Term.mkArity (List.rev stt,concl_sort) in *)
+	      (* 	t *)
+	      (* in *)
+	      (* (\* let ctx' = Inductiveops.make_arity_signature env false ind_family in	       *\) *)
+	      (* Print.( *)
+	      (* 	let doc = messages *)
+	      (* 	  [ *)
+	      (* 	    "stt", telescope stt; *)
+	      (* 	    "vars", separate_map semi subst_name identifier_list; *)
+	      (* 	    "ctx", rel_context ctx; *)
+	      (* 	    "split_trees", debug split_trees; *)
+	      (* 	    "leaves", separate_map semi subst_name vars'; *)
+	      (* 	    (\* "ctx'", rel_context ctx'; *\) *)
+	      (* 	    "concl", constr concl *)
+ 	      (* 	  ] *)
+	      (* 	in eprint (prefix 2 2 (string "return_clause_call") doc) *)
+	      (* ); *)
+	      (* let result  = build env concl (vars') (split_trees) (List.rev ctx) in  *)
+	      (* Print.( *)
+	      (* 	let doc = messages  *)
+	      (* 	  [ *)
+	      (* 	    "result", constr result; *)
+	      (* 	  ] *)
+	      (* 	in eprint (prefix 2 2 (string "return_clause") doc) *)
+	      (* ); *)
+	      (* (\* let result = Term.mkApp (result, Termops.extended_rel_vect 0 ctx) in *\) *)
+	      (* result; *)
+	      let concl_sort = new_sort env ind_family in 
+	      (* let concl_sort = Termops.new_Type_sort () in *)
+	      let t = Term.mkArity (List.rev stt ,concl_sort) in
+	      let t = Termops.it_mkLambda_or_LetIn t ctx in
+	      t
 		
 	    in 
 	    let branches =
@@ -368,8 +392,12 @@ let diag env sigma (leaf_ids: name list)
 		  let args = Inductiveops.build_dependent_constructor cs
 		    :: Array.to_list cs.Inductiveops.cs_concl_realargs in 
 		  let stt = List.rev (Termops.substl_rel_context args (List.rev stt)) in
-		  let subst = snd (List.fold_right (fun x (n,acc) -> (succ n,(Rel n, x)::acc)) args (1,[])) in
-		  
+		  (* let concl' = Term.substl (List.rev args) concl in  *)
+		  (* Print.(eprint (messages ["concl", constr concl; "concl'", constr concl';  *)
+		  (* 			   "args", separate_map semi constr args])); *)
+		  (* let concl = concl in  *)
+
+
 		  (** We may instantiate the body of the branch by the
 		      daemon, based on the following idea.
 
@@ -396,10 +424,9 @@ let diag env sigma (leaf_ids: name list)
 		      begin
 			let env' = Environ.push_rel_context cs.Inductiveops.cs_args env in
 			let term =
-			  build env' subst 
-			    (succ shift)
+			  build env' 
 			    concl
-			    identifier_list
+			    (List.map (Subst.lift_name 1) identifier_list)
 			    (split_trees@ll)
 			    (List.rev_append cs.Inductiveops.cs_args stt)
 			in
@@ -422,7 +449,7 @@ let diag env sigma (leaf_ids: name list)
 	    Term.mkCase (case_info,return_clause,Term.mkRel 1,branches)
 	)
   in
-  build env  [] 0 concl leaf_ids split_trees split_tree_types 
+  build env  concl leaf_ids split_trees split_tree_types 
 
 (** Debug version, that only try to construct the diag *)
 let pose_diag h name gl = 
@@ -442,7 +469,7 @@ let pose_diag h name gl =
   Print.(eprint (stripes( string "final diag") ^/^ constr diag));
   cps_mk_letin "diag" diag (fun k -> Tacticals.tclIDTAC) gl
 
-    
+
   
 let invert h gl =
   let env = Tacmach.pf_env gl in
