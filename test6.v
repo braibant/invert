@@ -17,8 +17,13 @@ Section t.
       
   Proof. 
     intros H.
-    invert H. auto. 
-    intros. subst. auto. 
+    diag H d. 
+    (* set (d := diag (S n) (cons n h v1) (cons n h v2)). simpl in d.  *)
+    refine (match H as X' in P a b c return diag a b c X' with
+              | Pnil => _
+              | Pcons n v1 v2 H h => _ end); simpl.
+    auto.
+    auto. 
     Show Proof. 
   Fail Qed. 
   (* Restart.  *)
