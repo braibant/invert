@@ -28,8 +28,8 @@ COQSRCLIBS?=-I $(COQLIB)kernel/ -I $(COQLIB)lib \
   -I $(COQLIB)toplevel -I $(COQLIB)grammar 
 
 
-OCAMLC=ocamlfind ocamlc -package pprint -linkpkg -rectypes
-OCAMLOPT=ocamlfind ocamlopt -package pprint -linkpkg -rectypes
+OCAMLC=ocamlfind ocamlc -package pprint -linkpkg -rectypes -g
+OCAMLOPT=ocamlfind ocamlopt -package pprint -linkpkg -rectypes -g
 OCAMLDEP=ocamlfind ocamldep -package pprint 
 LIBS= $(COQSRCLIBS)
 
@@ -56,8 +56,9 @@ CMX:= $(MLFILES:.ml=.cmx) $(MLPACKFILES:.mlpack=.cmx) $(ML4FILES:.ml4=.cmx)
 CMIFILES=$(CMO:.cmo=.cmi)
 VOFILES := $(VFILES:.v=.vo)
 CMXS := invert.cmxs 
+CMA := invert.cma
 
-all: $(CMO) $(CMX) invert.cmo invert.cmxs $(VOFILES)
+all: $(CMO) $(CMX) invert.cma invert.cmxs $(VOFILES)
 
 clean:
 	rm -f $(CMO) $(CMX) $(VOFILES) invert.cmxs
@@ -79,6 +80,9 @@ printenv:
 
 %.cmxs: $(CMX)
 	$(OCAMLOPT)  -shared -o $@  $^
+
+%.cma: $(CMO)
+	$(OCAMLC) $(LIBS) -a -o $@  $^
 
 %.cmx: %.ml4
 	$(OCAMLOPT) $(LIBS) -c $(PP) -impl $<
