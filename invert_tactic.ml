@@ -84,10 +84,6 @@ let make_a_pattern env sigma (args: Term.constr list) : split_tree list * split_
     let (a, b) = CList.fold_map' aux args [] in
     (a, b)
 
-let make_a_pattern env sigma args =
-  try make_a_pattern env sigma args
-  with Not_found -> assert false
-
 (** From the split_tree_leave list, we build an identifier list by generating
     variables y_s for the LTerm t_s.
 
@@ -97,12 +93,11 @@ let make_a_pattern env sigma args =
     We must also generalize hypotheses not present in split_tree_leave that depends
     on an element of split_tree_leave to get the real conclusion
 *)
-let prepare_conclusion_type gl leaves =
+let prepare_conclusion_type preconcl leaves =
   let vars = List.map (function LVar x -> Subst.Var x | LRel x -> Subst.Rel x) leaves in
-  let concl = Tacmach.pf_concl gl in
   (vars,
    [||],
-   concl)
+   preconcl)
 
 let devil =
   Term.mkProd
@@ -113,32 +108,46 @@ let devil =
 let false_rect =
   lazy (Coqlib.coq_constant "Invert" ["Init"; "Logic"] "False_rect")
 
-
-(* Given an inductive I, and a constructor C, build the match that
-   filters the constructor C, and calls the [kt] function to build a
-   term; otherwise, calls the [kf] function. *)
-let mk_matchi env sigma ind constructor params term return_clause kt kf =
+(* Given an term [term] in type [I params {args}], build a case of return clause
+   [return_clause] feeding the impossible branch with a correct term and calling
+   [kf] constructor_number constructor_spec expected_type extracted_rel_context
+   for others. *)
+let mk_casei env sigma ind params term return_clause kf =
+  let ind_family = Inductiveops.make_ind_family (ind, params) in
   let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in
-  (* the type of each constructor *)
-  let (branches_type: Term.types array) = Inductiveops.arities_of_constructors env ind in
+  let (constructors: Inductiveops.constructor_summary array) =
+    Inductiveops.get_constructors env ind_family in
   let branches =
-    Array.mapi
-      (fun i ty ->
-	let ty_with_concrete_params = Term.prod_applist ty params in
-	let (args_ty,concl_ty) = Term.decompose_prod_assum ty_with_concrete_params in
-	let branch_body =
-	  if i + 1 = constructor
-	  then
-	    kt (Term.mkConstruct (ind,i + 1)) args_ty
-	  else
-	    kf (Term.mkConstruct (ind,i + 1)) args_ty
- 	in
-	branch_body
-      )
-      branches_type
+    Array.mapi (fun i cs ->
+      (**
+	 We normalize the application of the return
+	 clause to the arguments of the current branch:
+	 this yields a rel_context and a term.
+
+	 If the rel_context ends by False, it means that we can
+	 instantiate this branch with False_rect.
+	 Else the continuation function is called. *)
+      let lifted_return =
+	Term.lift cs.Inductiveops.cs_nargs return_clause in
+      let branch_pre_ty =
+	Term.mkApp (lifted_return, cs.Inductiveops.cs_concl_realargs) in
+      let branch_ty = Term.mkApp
+	(branch_pre_ty, [|Inductiveops.build_dependent_constructor cs|]) in
+      let (specialized_ctx,expectation) =
+	Reductionops.splay_prod_assum env sigma branch_ty in
+      match specialized_ctx with
+      | (_,_,ty) :: _
+	  when Reductionops.is_conv env sigma ty
+	    (Util.delayed_force Coqlib.build_coq_False) ->
+	Term.it_mkLambda_or_LetIn
+	  (Term.mkApp
+	     (Lazy.force false_rect, [|expectation; Term.mkRel 1|]))
+	  specialized_ctx
+      | _ -> kf i cs branch_ty specialized_ctx
+    )
+      constructors
   in
-  let t = Term.mkCase (case_info,return_clause,term,branches) in
-  t
+  Term.mkCase (case_info,return_clause,term,branches)
 
 let rec print_split_tree t =
   let open Print in
@@ -163,75 +172,7 @@ let print_split_tree_list (st: split_tree list) =
     (print_split_tree)
     st
 
-let rev_append ctx stt =
-  let result =
-    List.rev_append ctx stt
-  in
-  Print.(eprint (
-    prefix 2 2 (string "rev_append")
-      (messages [
-	"ctx", rel_context ctx;
-	"stt", telescope stt;
-	"result", telescope result
-      ] )
-  ));
-  result
-
-(* replace [c] with rel [k] in [tele] *)
-let rec anti_subst_telescope c k tele =
-  match tele with
-  | [] -> []
-  | (name,None,ty):: tele ->
-   (name, None, Termops.replace_term c (Term.mkRel k) ty)
-   :: anti_subst_telescope (Term.lift 1 c) (succ k) tele
-;;
-
-(* let anti_subst_telescope c k tele = *)
-(*   let result =  anti_subst_telescope c k tele in  *)
-(*   Print.( *)
-(*     let doc = messages  *)
-(*       [ *)
-(* 	"c", constr c; *)
-(* 	"k", int k; *)
-(* 	"tele", telescope tele; *)
-(* 	"result", telescope result *)
-(*       ] in  *)
-(*     let doc = prefix 2 2 (string "anti_subst") doc  in  *)
-(*     eprint doc *)
-(*   ); *)
-(*   result *)
-
-(* [args] is telescope of the arguments;
-   [n] should be the length of the rel_context of the arguments of the inductive *)
-let rec iter_tele args n tele =
-  match args with
-  | [] -> tele
-  | t :: q ->
-    let tele = anti_subst_telescope t n tele in
-    iter_tele q (pred n) tele
-
-let iter_tele args n tele =
-  let result = iter_tele args n tele in
-  Print.(
-    let doc = messages
-      [
-	"args", separate_map semi constr args;
-	"n", int n;
-	"tele", telescope tele;
-	"result", telescope result;
-      ] in
-    let doc = prefix 2 2 (string "iter") doc  in
-    eprint doc
-  );
-  result
-
-let new_sort env ind_family =
-  let (_,sort_family) = Inductiveops.get_arity env ind_family in
-  let sort = Termops.new_sort_in_family sort_family in
-  sort
-
-
-let rec diag env sigma (leaf_ids: Subst.name list)
+let rec split_tree2diag env sigma (leaf_ids: Subst.name list)
     (split_trees: split_tree list)
     (return_type: Term.types)
     (concl: Term.constr)
@@ -276,16 +217,13 @@ let rec diag env sigma (leaf_ids: Subst.name list)
 	    begin match vars with
 	    | [] -> Errors.anomaly (Pp.str "build: Less variable than split_tree leaves")
 	    |id_h :: id_q ->
-	      diag env sigma
+	      split_tree2diag env sigma
 		(List.map (fun x -> if Subst.eq_name x id_h then Subst.Rel 1 else x)
 		   id_q) ll return_type
 		(Subst.apply [id_h, Term.mkRel 1]  concl)
 	    end
 	  | Some (ind, constructor, params, split_trees) -> (* we want to refine in the [constructor] constructor case. *)
 	    let ind_family = Inductiveops.make_ind_family (ind, params) in
-	    let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in
-	    let (constructors: Inductiveops.constructor_summary array) =
-	      Inductiveops.get_constructors env ind_family in
 	    (* We need to build the return clause and the branches.
 
 	       Let's take the example where we match on v: vector (S
@@ -312,15 +250,8 @@ let rec diag env sigma (leaf_ids: Subst.name list)
 		 that we represent as Rel 1. *)
 	      let ind_args = snd (Term.decompose_app ty_argx) in
 	      let ind_args = List.map (Term.lift 1) ind_args in
-	      let split_trees,leaves =
-		make_a_pattern env sigma (ind_args@[Term.mkRel 1]) in
-	      let sort = new_sort env ind_family in
-	      let return_clause_type =
-		Inductiveops.make_arity env true ind_family sort in
-
-	      (* morally, this is prepare_conclusion_type *)
-	      let vars' = List.map (function LVar x -> Subst.Var x | LRel x -> Subst.Rel x) leaves in
-	      let result = diag env sigma vars' split_trees return_clause_type return_type in
+	      let result = matched_type2diag env sigma (Term.mkRel 1)
+		ind_family ind_args return_type in
 	      (* put the result in eta long form *)
 	      let ctx =	Inductiveops.make_arity_signature env true ind_family in
 	      let lifted_result = Term.lift (Term.rel_context_length ctx) result in
@@ -332,11 +263,7 @@ let rec diag env sigma (leaf_ids: Subst.name list)
 	      	let doc = messages
 	      	  [
 		    "args", separate_map semi constr ind_args;
-		    "vars", separate_map semi Subst.pp_name vars';
 	      	    "ctx", rel_context ctx;
-	      	    "split_trees", print_split_tree_list split_trees;
-	      	    "leaves", separate_map semi Subst.pp_name vars';
-	      	    "concl", constr concl;
 	      	    "result", constr result;
 	      	    "result2", constr result';
 	      	  ]
@@ -344,70 +271,41 @@ let rec diag env sigma (leaf_ids: Subst.name list)
 	      );
 	      result' in (*we have the return clause *)
 
-	    let branches =
-	      Array.mapi
-		(fun i cs ->
-		  (**
-		      We normalize the application of the return
-		      clause to the arguments of the current branch:
-		      this yields a rel_context and a term.
-
-		     If the rel_context ends by False, it means that we can
-		      instantiate this branch with False_rect.
-		     Else the end of the rel_context is a correct raffinement of
-		     stt that we use in reccursive call *)
-		  let lifted_return =
-		    Term.lift cs.Inductiveops.cs_nargs return_clause in
-		  let branch_pre_ty =
-		    Term.mkApp (lifted_return, cs.Inductiveops.cs_concl_realargs) in
-		  let branch_ty = Term.mkApp
-		    (branch_pre_ty, [|Inductiveops.build_dependent_constructor cs|]) in
-		  let (specialized_ctx,expectation) =
-		    Reductionops.splay_prod_assum env sigma branch_ty in
-
-		  let real_body =
-		    if i + 1 = constructor
-		    then (* recursive call *)
-		      diag env sigma vars (split_trees@ll)
-			(Termops.it_mkProd_or_LetIn branch_ty cs.Inductiveops.cs_args)
-			concl
-		    else
-		      (* otherwise, in the underscore case, we return
-			 [False -> True] *)
-		      Term.it_mkLambda_or_LetIn
-			devil
-			(List.append specialized_ctx cs.Inductiveops.cs_args)
- 		  in
-		  match specialized_ctx with
-		    | (_,_,ty) :: _
-			when Reductionops.is_conv env sigma ty
-			  (Util.delayed_force Coqlib.build_coq_False) ->
-		      Term.it_mkLambda_or_LetIn
-			(Term.mkApp
-			   (Lazy.force false_rect, [|expectation; Term.mkRel 1|]))
-			specialized_ctx
-		    | _ -> real_body
-		)
-		constructors
-	    in
-	    Term.mkCase (case_info,return_clause,Term.mkRel 1,branches)
+	    let real_body i cs branch_ty specialized_ctx =
+	      if i + 1 = constructor
+	      then (* recursive call *)
+		split_tree2diag env sigma vars (split_trees@ll)
+		  (Termops.it_mkProd_or_LetIn branch_ty cs.Inductiveops.cs_args)
+		  concl
+	      else
+		(* otherwise, in the underscore case, we return
+		   [False -> True] *)
+		Term.it_mkLambda_or_LetIn
+		  devil
+		  (List.append specialized_ctx cs.Inductiveops.cs_args)
+ 	    in
+	    mk_casei env sigma ind params (Term.mkRel 1) return_clause real_body
 	)
+and matched_type2diag env sigma tm ind_family real_args pre_concl =
+  let (_,sort_family) = Inductiveops.get_arity env ind_family in
+  let (split_trees,leaves) = make_a_pattern env sigma (real_args @ [ tm ]) in
+  let (leaves_ids,generalized_hyps,concl) = prepare_conclusion_type pre_concl leaves in
+  let sort = Termops.new_sort_in_family sort_family in
+  let return_type = Inductiveops.make_arity env true ind_family sort in
+  split_tree2diag env sigma leaves_ids split_trees return_type concl
+
 
 (** Debug version, that only try to construct the diag *)
 let pose_diag h name gl =
   let env = Tacmach.pf_env gl in
   let sigma = Tacmach.project gl in
   let h_ty = Tacmach.pf_get_hyp_typ gl h in
-
+  let pre_concl = Tacmach.pf_concl gl in
   (* get the name of the inductive and the list of arguments it is applied to *)
   let (ind_family, real_args) =
     Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma h_ty) in
-  let (_,sort_family) = Inductiveops.get_arity env ind_family in
-  let (split_trees,leaves) = make_a_pattern env sigma (real_args @ [ Term.mkVar h]) in
-  let (leaves_ids,generalized_hyps,concl) = prepare_conclusion_type gl leaves in
-  let sort = Termops.new_sort_in_family sort_family in
-  let return_type =(Inductiveops.make_arity env true ind_family sort) in
-  let diag = diag env sigma leaves_ids split_trees return_type concl in
+  let diag = matched_type2diag env sigma (Term.mkVar h)
+    ind_family real_args pre_concl in
   Print.(eprint (stripes( string "final diag") ^/^ constr diag));
   cps_mk_letin "diag" diag (fun k -> Tacticals.tclIDTAC) gl
 
@@ -416,18 +314,15 @@ let invert h gl =
   let env = Tacmach.pf_env gl in
   let sigma = Tacmach.project gl in
   let h_ty = Tacmach.pf_get_hyp_typ gl h in
+  let pre_concl = Tacmach.pf_concl gl in
 
   (** ensures that the name x is fresh in the _first_ goal *)
   let (!!) x = Tactics.fresh_id [] ((Names.id_of_string x)) gl in
- (* get the name of the inductive and the list of arguments it is applied to *)
+  (* get the name of the inductive and the list of arguments it is applied to *)
   let (ind_family, real_args) =
     Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma h_ty) in
-  let (_,sort_family) = Inductiveops.get_arity env ind_family in
-  let (split_trees,leaves) = make_a_pattern env sigma (real_args @ [Term.mkVar h]) in
-  let (leaves_ids,generalized_hyps,concl) = prepare_conclusion_type gl leaves in
-  let sort = Termops.new_sort_in_family sort_family in
-  let return_type = Inductiveops.make_arity env true ind_family sort in
-  let diag = diag env sigma leaves_ids split_trees return_type concl in
+  let diag = matched_type2diag env sigma (Term.mkVar h)
+    ind_family real_args pre_concl in
   (* Each branch is a pair: type of the subgoal, body of the branch *)
   let constructors = Inductiveops.get_constructors env ind_family in
   let branches diag =

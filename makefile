@@ -11,26 +11,27 @@ $(call includecmdwithout@,$(COQBIN)coqtop -config)
 SRC:= 	print.ml print.mli \
 	context.ml context.mli telescope.ml telescope.mli \
 	invertlib.ml \
-	invert_tactic.ml invert_tactic2.ml invert.ml4 \
-	test1.v test2.v test3.v test4.v test5.v
+	invert_tactic.ml invert.ml4 \
+	test1.v test2.v test3.v test4.v test5.v test7.v
 
 
 
-COQDEP = ${COQBIN}coqdep
+COQDEP = ${COQBIN}coqdep -c
 COQC = ${COQBIN}coqc
 
 COQLIB = $(shell ${COQC} -where)/
+COQLIBS =-R . Invert
 
 COQSRCLIBS?=-I $(COQLIB)kernel/ -I $(COQLIB)lib \
   -I $(COQLIB)library -I $(COQLIB)parsing -I $(COQLIB)pretyping \
   -I $(COQLIB)interp -I $(COQLIB)printing -I $(COQLIB)intf \
   -I $(COQLIB)proofs -I $(COQLIB)tactics -I $(COQLIB)tools \
-  -I $(COQLIB)toplevel -I $(COQLIB)grammar 
+  -I $(COQLIB)toplevel -I $(COQLIB)grammar
 
 
 OCAMLC=ocamlfind ocamlc -package pprint -linkpkg -rectypes -g
 OCAMLOPT=ocamlfind ocamlopt -package pprint -linkpkg -rectypes -g
-OCAMLDEP=ocamlfind ocamldep -package pprint 
+OCAMLDEP=ocamlfind ocamldep -package pprint
 LIBS= $(COQSRCLIBS)
 
 GRAMMARS?=grammar.cma
@@ -46,7 +47,7 @@ ML4FILES:= $(filter %.ml4, $(SRC))
 MLFILES:=  $(filter %.ml, $(SRC))
 VFILES :=  $(filter %.v, $(SRC))
 
-# DEPENDENCIES 
+# DEPENDENCIES
 
 -include $(addsuffix .d,$(SRC))
 .SECONDARY: $(addsuffix .d,$(SRC))
@@ -55,13 +56,13 @@ CMO:= $(MLFILES:.ml=.cmo) $(MLPACKFILES:.mlpack=.cmo) $(ML4FILES:.ml4=.cmo)
 CMX:= $(MLFILES:.ml=.cmx) $(MLPACKFILES:.mlpack=.cmx) $(ML4FILES:.ml4=.cmx)
 CMIFILES=$(CMO:.cmo=.cmi)
 VOFILES := $(VFILES:.v=.vo)
-CMXS := invert.cmxs 
+CMXS := invert.cmxs
 CMA := invert.cma
 
 all: $(CMO) $(CMX) invert.cma invert.cmxs $(VOFILES)
 
 clean:
-	rm -f $(CMO) $(CMX) $(VOFILES) invert.cmxs
+	rm -f $(CMO) $(CMX) $(CMA) $(VOFILES) invert.cmxs
 	rm -f *.d *.
 	rm -f *.o *.cmi *.glob
 	rm -f *.cmxs *.native
@@ -94,13 +95,13 @@ printenv:
 	$(OCAMLC) $(LIBS) -c $<
 
 %.ml4.d: %.ml4
-	$(OCAMLDEP) $(PP) -slash $(LIBS) $< > $@ 
+	$(COQDEP) -slash $(LIBS) $(COQLIBS) $< > $@
 
 %.ml.d: %.ml
 	$(OCAMLDEP) -slash $(LIBS) $< > $@
 
 %.v.d: %.v
-	$(COQDEP) -slash $(COQLIBS) "$<" > "$@" 
+	$(COQDEP) -slash $(COQLIBS) "$<" > "$@"
 
 %.vo %.glob: %.v $(CMXS)
-	$(COQC) $(COQDEBUG) $(COQFLAGS) $*
+	$(COQC) $(COQDEBUG) $(COQLIBS) $*
