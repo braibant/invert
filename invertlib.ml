@@ -63,3 +63,12 @@ let assert_vector
   in
   aux 0 []
 
+
+let devil =
+  Term.mkProd
+    (Names.Anonymous,
+     Util.delayed_force Coqlib.build_coq_False,
+     Util.delayed_force Coqlib.build_coq_True)
+
+let false_rect =
+  lazy (Coqlib.coq_constant "Invert" ["Init"; "Logic"] "False_rect")

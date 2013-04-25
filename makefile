@@ -29,8 +29,8 @@ COQSRCLIBS?=-I $(COQLIB)kernel/ -I $(COQLIB)lib \
   -I $(COQLIB)toplevel -I $(COQLIB)grammar
 
 
-OCAMLC=ocamlfind ocamlc -package pprint -linkpkg -rectypes -g
-OCAMLOPT=ocamlfind ocamlopt -package pprint -linkpkg -rectypes -g
+OCAMLC=ocamlfind ocamlc -package pprint -linkpkg -rectypes 
+OCAMLOPT=ocamlfind ocamlopt -package pprint -linkpkg -rectypes
 OCAMLDEP=ocamlfind ocamldep -package pprint
 LIBS= $(COQSRCLIBS)
 

@@ -18,7 +18,8 @@ Section t.
   Proof. 
     intros H.
     diag H d. 
-    (* set (d := diag (S n) (cons n h v1) (cons n h v2)). simpl in d.  *)
+    set (d := diag (S n) (cons n h v1) (cons n h v2)). simpl in d.
+    exact d. 
     refine (match H as X' in P a b c return diag a b c X' with
               | Pnil => _
               | Pcons n v1 v2 H h => _ end); simpl.
