@@ -299,7 +299,7 @@ and prepare_conclusion env concl stl : ST.name list * Term.constr =
   in
   let vars = ST.varsl stl in
   match ctx0 with
-  | [] -> (* fold_names ctx1 vars [] concl *) [], concl
+  | [] -> fold_names ctx1 vars [] concl 
   | _::ctx -> fold_ctx ctx (ST.pop_vars vars) [] concl 2 2
     
 (** Debug version, that only try to construct the diag *)
