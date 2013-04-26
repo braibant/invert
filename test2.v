@@ -16,10 +16,10 @@ Section t.
     P (S n) (cons n h v) -> P n v.
   Proof. intros H.
          diag H D.
-      refine (match H in P n' v' return diag n' v' H with | Pnil  => _  |Pcons n v h' h => _ end).
-      simpl. 
-      auto. simpl. auto. 
-      Show Proof. 
+         refine (match H in P n' v' return diag n' v' H with | Pnil  => _  |Pcons n v h' h => _ end).
+         simpl. 
+         auto. simpl. auto. 
+         Show Proof. 
   Qed.
 
 Definition rect2 (P:forall {n}, vector n -> vector n -> Type)
@@ -31,7 +31,7 @@ fix 2.
 intros n v1. invert v1.
  + intros v2; invert v2. assumption. exact (fun _ _ _ => False_rect _).
  + intros m t1 q1 v2.
-   generalize q1. invert v2. exact (False_rect _).
+   invert v2. exact (False_rect _).
    intros m' t2 q2 q1'. apply rect. apply rect2.
 Defined.
 Print rect2.

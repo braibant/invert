@@ -12,7 +12,7 @@ SRC:= 	print.ml print.mli \
 	context.ml context.mli telescope.ml telescope.mli \
 	invertlib.ml \
 	invert_tactic.ml invert.ml4 \
-	test1.v test2.v test3.v test4.v test5.v test7.v
+	test1.v test2.v test3.v test4.v test5.v test6.v test7.v test8.v test9.v test10.v
 
 
 
