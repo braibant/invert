@@ -1,9 +1,9 @@
-- Gerer les variables (aller jusque destruct)
 - Eliminer les false_rect a top level
 - Gerer les termes
 - Gerer les non-linearites non dirigees par les types (les tetes des
   vecteurs)
-- Ameliorer l'interface utilisateur
+- Ameliorer l'interface utilisateur (en particulier, n devrait
+  disparaitre dans test 10)
 - Eliminer les cassures inutiles (casser les nat, si tu casses les
   vects).
 - Ne pas expanser les letins dans les rel-contexts... 

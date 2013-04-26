@@ -309,7 +309,7 @@ let pose_diag h name gl =
   let h_ty = Tacmach.pf_get_hyp_typ gl h in
   let pre_concl = Tacmach.pf_concl gl in
   (* get the name of the inductive and the list of arguments it is applied to *)
-  let diag,[] = matched_type2diag env sigma (Term.mkVar h) h_ty pre_concl in
+  let diag,_ = matched_type2diag env sigma (Term.mkVar h) h_ty pre_concl in
   Print.(eprint (stripes( string "final diag") ^/^ constr diag));
   cps_mk_letin "diag" diag (fun k -> Tacticals.tclIDTAC) gl
 
@@ -352,7 +352,11 @@ let invert h gl =
 	(
 	  Tacticals.tclTHENLIST
 	    [Tactics.unfold_constr (Globnames.VarRef diag);
-	     Tactics.clear [diag; h]
+	     Tactics.clear (diag :: h :: (List.fold_left (fun acc x -> 
+	       match x with 
+	       | ST.Var n -> n::acc
+	       | _ -> acc
+	     ) [] l))
 	    ])
 	(fun vect gl ->
 	  let env = Tacmach.pf_env gl in
