@@ -48,6 +48,9 @@ module ST = struct
   | Var of Names.Id.t
   | Rel of int
 
+  let name_to_constr = function 
+    | Var v -> Term.mkVar v
+    | Rel i -> Term.mkRel i 
 
   let lift_name n = function
     | Var name -> Var name
@@ -221,7 +224,7 @@ let rec split_tree2diag
 	   if i + 1 = constructor
 	   then (* recursive call *)
 	     split_tree2diag env sigma 
-	       (split_trees@(List.map (fun x -> ST.rel x) args)@ll)
+	       (split_trees@List.map (fun x -> ST.Leaf x) args@ll)
 	       (Termops.it_mkProd_or_LetIn branch_ty cs.Inductiveops.cs_args)
 	       concl 
 	   else
@@ -233,7 +236,7 @@ let rec split_tree2diag
  	 in
 	 Term.applistc 
 	   (mk_casei env sigma ind params (Term.mkRel 1) return_clause real_body)
-	   (List.map Term.mkRel args)
+	   (List.map ST.name_to_constr args)
       )
 and matched_type2diag env sigma (tm: Term.constr) ty pre_concl =
   let (ind_family, real_args) =
@@ -245,22 +248,26 @@ and matched_type2diag env sigma (tm: Term.constr) ty pre_concl =
   let return_type = Inductiveops.make_arity env true ind_family sort in
   (split_tree2diag env sigma split_trees return_type concl), 
   generalized_hyps
-and prepare_conclusion env concl stl : int list * Term.constr = 
+and prepare_conclusion env concl stl : ST.name list * Term.constr = 
   let ctx0 = Environ.rel_context env in 
+  let ctx1 = List.map (fun (id,body,ty) -> Names.Name id, body, ty) ( Environ.named_context env) in 
+  
+  
   let rec occurs_check ty vars  = 
     match vars  with 
     | [] -> false
     | ST.Rel i :: vars ->  Termops.dependent (Term.mkRel i) ty || occurs_check ty vars
     | ST.Var v :: vars ->  Termops.dependent (Term.mkVar v) ty || occurs_check ty vars
   in
+  (* Fold on a rel-context *)
   let rec fold ctx vars args term pos add k =
     match ctx with
     | [] -> args, term, k
     | ((name, None, ty) as decl)::q ->
       let vars' = ST.pop_vars vars in
-      if occurs_check ty vars'
+      if occurs_check ty vars'  && not (List.mem (ST.Rel 1) vars') 
       then
-  	let args' = pos :: args in
+  	let args' = ST.Rel pos :: args in
 	let term' = Term.lift 1 term in
 	let term'' = Termops.replace_term (Term.mkRel (add + 1)) (Term.mkRel 1) term' in
 	fold q vars' args' (Term.mkProd (name, Term.lift pos ty, term'')) (succ pos) (succ add) (succ k)
@@ -268,6 +275,7 @@ and prepare_conclusion env concl stl : int list * Term.constr =
   	fold q vars' args term (succ pos) add k
     | _ -> assert false
   in  
+  (* fold on named-context *)
   match ctx0 with 
   | [] -> [], concl
   | _::ctx -> 
