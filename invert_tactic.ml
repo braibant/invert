@@ -42,18 +42,20 @@ let mk_casei env sigma ind params term return_clause kf =
   in
   Term.mkCase (case_info,return_clause,term,branches)
 
-let mk_case_tac ind_family term return_clause subtac k = fun gl ->   
-  let ind = fst (Inductiveops.dest_ind_family  ind_family) in
+let mk_case_tac ind_family term return_clause subtac k = fun gl ->
+  let ind = fst (Inductiveops.dest_ind_family ind_family) in
   let env = Tacmach.pf_env gl in
   let sigma = Tacmach.project gl in
   let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in
   let (constructors: Inductiveops.constructor_summary array) =
     Inductiveops.get_constructors env ind_family in
   let rec build i l acc : Proof_type.tactic = fun gl ->
-    if i < Array.length constructors
+   if i < Array.length constructors
     then
-      begin 
-	let cs = constructors.(i) in 
+      begin
+	let cs = constructors.(i) in
+	let ctx = cs.Inductiveops.cs_args in
+	let env' = Environ.push_rel_context ctx env in
 	let lifted_return =
 	  Term.lift cs.Inductiveops.cs_nargs return_clause in
 	let branch_pre_ty =
@@ -61,22 +63,21 @@ let mk_case_tac ind_family term return_clause subtac k = fun gl ->
 	let branch_ty = Term.mkApp
 	  (branch_pre_ty, [|Inductiveops.build_dependent_constructor cs|]) in
 	let (specialized_ctx,expectation) =
-	  Reductionops.splay_prod_assum env sigma branch_ty in
-	let ctx = cs.Inductiveops.cs_args in
-	let branch_ty = Term.it_mkProd_or_LetIn branch_ty ctx in	  
+	  Reductionops.splay_prod_assum env' sigma branch_ty in
+	let branch_ty = Term.it_mkProd_or_LetIn branch_ty ctx in
 	match specialized_ctx with
 	| (_,_,ty) :: _
 	    when Reductionops.is_conv env sigma ty
 	      (Util.delayed_force Coqlib.build_coq_False) ->
-	  let body = 
+	  let body =
 	    Term.it_mkLambda_or_LetIn
 	      (Term.mkApp
 		 (Lazy.force false_rect, [|expectation; Term.mkRel 1|]))
-	      specialized_ctx	
-	  in 
-	  let body = Term.it_mkLambda_or_LetIn body ctx in 
+	      specialized_ctx
+	  in
+	  let body = Term.it_mkLambda_or_LetIn body ctx in
 	  build (succ i) l (body::acc ) gl
-	| _ -> 
+	| _ ->
 	  let name = (Names.id_of_string "invert_subgoal") in
 	  let name =  Tactics.fresh_id [] name gl in
 	  let t = Tactics.assert_tac  (Names.Name name) branch_ty in
@@ -86,19 +87,11 @@ let mk_case_tac ind_family term return_clause subtac k = fun gl ->
 		build (succ i) (name :: l) ((Term.mkVar name) :: acc)
 	    ] gl
       end
-    else  
-      let return_clause =
-	let ctx = (Inductiveops.make_arity_signature env true ind_family) in
-	let return_clause = Term.lift (Term.rel_context_length ctx) return_clause  in
-	Term.it_mkLambda_or_LetIn
-	  (Term.mkApp (return_clause, Termops.extended_rel_vect 0 ctx))
-	  ctx
-      in 
-      let term = Term.mkCase (case_info, return_clause, term, (Array.of_list (List.rev acc))) in 
-      Print.(eprint (constr term));
-      k term gl 
-  in 
-  build 0 [] [] gl 
+    else
+      let term = Term.mkCase (case_info, return_clause, term, (Array.of_list (List.rev acc))) in
+      k term gl
+  in
+  build 0 [] [] gl
 
 
 module ST = struct
@@ -132,9 +125,9 @@ module ST = struct
 
     
   let make env sigma (args: Term.constr list) : t list =
-    Print.(eprint 
-	     (prefix 2 2 (string "args")
-	     (separate_map semi constr args)));
+    (* Print.(eprint  *)
+    (* 	     (prefix 2 2 (string "args") *)
+    (* 	     (separate_map semi constr args))); *)
     let rec aux arg : t  =
       let (hd,tl) = Reductionops.whd_betadeltaiota_stack env sigma arg in
       match Term.kind_of_term hd with
@@ -144,7 +137,7 @@ module ST = struct
 	let params,real_args = CList.chop (Inductiveops.inductive_nparams ind) tl in
 	let constrs = List.map aux real_args in
 	Constructor (ind, i, params, constrs)
-      | _ -> 
+      | _ ->
 	Print.(eprint (constr hd));
 	invalid_arg "todo"
     in
@@ -206,55 +199,52 @@ module ST = struct
             
 end
 
-let rec split_tree2diag 
-    env sigma 
+let rec split_tree2diag
+    env sigma
     (split_trees: ST.t list)
     (return_type: Term.types)
     (concl: Term.constr)
-    =  
-  Print.(
-    let doc = messages
-      ["stl", ST.pp_tl split_trees;
-       "return_type", constr return_type;
-       "concl", constr concl;
-      ]
-    in
-    let msg = surround 2 2 (string "begin") doc (string "end") in
-    eprint msg
-  );
-  let split_trees = ST.liftl 1 split_trees in 
+    =
+  (* Print.( *)
+  (*   let doc = messages *)
+  (*     ["stl", ST.pp_tl split_trees; *)
+  (*      "return_type", constr return_type; *)
+  (*      "concl", constr concl; *)
+  (*     ] *)
+  (*   in *)
+  (*   let msg = surround 2 2 (string "begin") doc (string "end") in *)
+  (*   eprint msg *)
+  (* ); *)
+  let split_trees = ST.liftl 1 split_trees in
   match split_trees with
   | [] -> concl
   | head::ll ->
-    let (name_argx,ty_argx,return_type) = 
-      try 
+    let (name_argx,ty_argx,return_type) =
 	Term.destProd
-	  (Reductionops.whd_betaiotazeta sigma return_type) 
-      with e -> 	  Print.(eprint (constr return_type)); raise e
+	  (Reductionops.whd_betaiotazeta sigma return_type)
     in
     (* The first thing to do is to introduce the variable we are
        working on and do the lift accordingly.
-       
+
        This variable has type [ty_argx] == [I pi ai].  *)
-    Term.mkLambda 
+    Term.mkLambda
       (name_argx,ty_argx,
        let env = Environ.push_rel (name_argx,None,ty_argx) env in
        let concl = Term.lift 1 concl in
-       
+
        match head with
-       | ST.Leaf v -> 
-	 split_tree2diag env sigma 
+       | ST.Leaf v ->
+	 split_tree2diag env sigma
 	   (List.map (ST.replace v (ST.Rel 1)) ll)
 	   return_type
-	   (ST.replace_term  v (Term.mkRel 1) concl)	   
+	   (ST.replace_term  v (Term.mkRel 1) concl)
        | ST.Constructor (ind, constructor, params, split_trees) ->
 	 (* we want to refine in the [constructor] constructor case. *)
-	 let ind_family = Inductiveops.make_ind_family (ind, params) in	 
 	 (* We need to build the return clause and the branches.
-	    
+
 	    Let's take the example where we match on v: vector (S n),
 	    to build the predicate P n v
-	    
+
 	    The return clause is: fun k => match k with | 0 => fun v
 	    => False -> True | S m => fun v => P (S m) v -> Type end
 
@@ -264,27 +254,17 @@ let rec split_tree2diag
 	 (* We transform the return clause in a recursive call to
 	    [invert]. The thing to invert is the argment we destruct
 	    on and the conclusion we want is [forall stt -> Type] *)
-	 
+
 	 let return_clause,args =
-	   let result,args = 
-	     matched_type2diag env sigma (Term.mkRel 1) (Term.lift 1 ty_argx) return_type 
-	   in
-	   (* put the result in eta long form *)
-	   let ctx = Inductiveops.make_arity_signature env true ind_family in
-	   let lifted_result = Term.lift (Term.rel_context_length ctx) result in
-	   let result' =
-	     Termops.it_mkLambda_or_LetIn
-	       (Reductionops.whd_beta sigma
-		  (Term.mkApp (lifted_result,Termops.extended_rel_vect 0 ctx))) ctx in
-	   result', args 
+	   matched_type2diag env sigma (Term.mkRel 1) (Term.lift 1 ty_argx) return_type
 	 in (*we have the return clause *)
 	 let real_body i cs branch_ty specialized_ctx =
 	   if i + 1 = constructor
 	   then (* recursive call *)
-	     split_tree2diag env sigma 
+	     split_tree2diag env sigma
 	       (split_trees@List.map (fun x -> ST.Leaf x) args@ll)
 	       (Termops.it_mkProd_or_LetIn branch_ty cs.Inductiveops.cs_args)
-	       concl 
+	       concl
 	   else
 	     (* otherwise, in the underscore case, we return
 		[False -> True] *)
@@ -292,7 +272,7 @@ let rec split_tree2diag
 	       devil
 	       (List.append specialized_ctx cs.Inductiveops.cs_args)
  	 in
-	 Term.applistc 
+	 Term.applistc
 	   (mk_casei env sigma ind params (Term.mkRel 1) return_clause real_body)
 	   (List.map ST.name_to_constr args)
       )
@@ -304,14 +284,21 @@ and matched_type2diag env sigma (tm: Term.constr) ty pre_concl =
   let generalized_hyps,concl = prepare_conclusion env pre_concl split_trees  in
   let sort = Termops.new_sort_in_family sort_family in
   let return_type = Inductiveops.make_arity env true ind_family sort in
-  (split_tree2diag env sigma split_trees return_type concl), 
-  generalized_hyps
-and prepare_conclusion env concl stl : ST.name list * Term.constr = 
-  let ctx0 = Environ.rel_context env in 
-  let ctx1 = Environ.named_context env in 
-  
-  let rec occurs_check ty vars  = 
-    match vars  with 
+  let result = split_tree2diag env sigma split_trees return_type concl in
+  (* put the result in eta long form *)
+  let ctx = Inductiveops.make_arity_signature env true ind_family in
+  let lifted_result = Term.lift (Term.rel_context_length ctx) result in
+  let result' =
+    Termops.it_mkLambda_or_LetIn
+      (Reductionops.whd_beta sigma
+	 (Term.mkApp (lifted_result,Termops.extended_rel_vect 0 ctx))) ctx in
+  result', generalized_hyps
+and prepare_conclusion env concl stl : ST.name list * Term.constr =
+  let ctx0 = Environ.rel_context env in
+  let ctx1 = Environ.named_context env in
+
+  let rec occurs_check ty vars  =
+    match vars  with
     | [] -> false
     | ST.Rel i :: vars ->  Termops.dependent (Term.mkRel i) ty || occurs_check ty vars
     | ST.Var v :: vars ->  Termops.dependent (Term.mkVar v) ty || occurs_check ty vars
@@ -322,7 +309,7 @@ and prepare_conclusion env concl stl : ST.name list * Term.constr =
     | [] -> args, term
     | ((name, None, ty) as decl)::q ->
       let vars' = ST.pop_vars vars in
-      if occurs_check ty vars'  && not (List.mem (ST.Rel 1) vars') 
+      if occurs_check ty vars'  && not (List.mem (ST.Rel 1) vars')
       then
   	let args' = ST.Rel pos :: args in
 	let term' = Term.lift 1 term in
@@ -331,7 +318,7 @@ and prepare_conclusion env concl stl : ST.name list * Term.constr =
       else
   	fold_ctx q vars' args term (succ pos) add
     | _ -> assert false
-  in  
+  in
   (* fold on named-context *)
   let rec fold_names ctx vars args term =
     match ctx with
@@ -357,9 +344,9 @@ and prepare_conclusion env concl stl : ST.name list * Term.constr =
   in
   let vars = ST.varsl stl in
   match ctx0 with
-  | [] -> fold_names ctx1 vars [] concl 
+  | [] -> fold_names ctx1 vars [] concl
   | _::ctx -> fold_ctx ctx (ST.pop_vars vars) [] concl 2 2
-    
+
 (** Debug version, that only try to construct the diag *)
 let pose_diag h name gl =
   let env = Tacmach.pf_env gl in
@@ -371,11 +358,7 @@ let pose_diag h name gl =
   Print.(eprint (stripes( string "final diag") ^/^ constr diag));
   cps_mk_letin "diag" diag (fun k -> Tacticals.tclIDTAC) gl
 
-  
-  
-
 let invert h gl =
-  
   let env = Tacmach.pf_env gl in
   let sigma = Tacmach.project gl in
   let h_ty = Tacmach.pf_get_hyp_typ gl h in
@@ -387,28 +370,16 @@ let invert h gl =
   (* Each branch is a pair: type of the subgoal, body of the branch *)
   let (ind_family, _) = Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma h_ty) in
 
-  Print.(eprint (stripes( string "final diag") ^/^ constr diag));
-  cps_mk_letin "diag" diag
-    (fun diag' gl ->
       let subtac =
-	  Tacticals.tclTHENLIST
-	    [Tactics.unfold_constr (Globnames.VarRef diag');
-	     Tactics.clear (diag' :: h :: (List.fold_left (fun acc x -> 
-	       match x with 
+	   Tactics.clear (h :: (List.fold_left (fun acc x ->
+	       match x with
 	       | ST.Var n -> n::acc
 	       | _ -> acc
 	     ) [] l))
-	    ]
       in
-      mk_case_tac ind_family (Term.mkVar h) (Term.mkVar diag') subtac
+      mk_case_tac ind_family (Term.mkVar h) diag subtac
 	(
-	  fun term -> 
-	    Print.(eprint (string "HERE!!!!"));
-	    let term = Term.applistc term (List.map ST.name_to_constr l) in 
+	  fun term ->
+	    let term = Term.applistc term (List.map ST.name_to_constr l) in
 	    Tactics.refine term
 	) gl
-    ) gl
-    
-	
-
-

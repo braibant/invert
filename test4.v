@@ -7,7 +7,7 @@ Inductive mul3 : nat -> Prop :=
 Lemma inv_mul_3plusn : forall n, mul3 (3 + n) -> mul3 n.
 Proof.
 intros n m. 
-invert m. constructor. 
+invert m.
 simpl. auto. 
 Qed. 
 
@@ -15,8 +15,7 @@ Qed.
 Lemma inv_mul_3plusn_no0 : forall n, mul3 (3 + n) -> mul3 n.
 Proof.
 intros n m.
-invert m. 
-constructor.
+invert m.
 simpl. auto. 
 Qed.
 
@@ -27,5 +26,5 @@ Proof.
 intros H.
 invert H; simpl; intros; auto.
 Show Proof.
-Qed.  
+Qed.
 End sec_absu_2ismul3.
