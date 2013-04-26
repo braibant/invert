@@ -16,91 +16,12 @@ Section t.
         (rect: forall a {n} (v: t (S n)), P v -> P (a :: v)) :  
     forall n (v: t (S n)),  P v.
     Proof.
-    fix 2. intros n v.
-    refine (let diag n :=
-                match n return t n -> Type with 
-                    | 0 => fun v => False -> True
-                    | S n => fun (v : t (S n)) => 
-                              P n v
-                  end in 
-              _
-             ).
-      refine (match v in t n' return diag n' v with 
-                | [] => _
-                | cons h m q => _
-              end
-             ).
-      simpl. auto. 
-      simpl. clear diag v n. 
-      
-      refine (match m return forall (v : t m), P m (h::v) with
-               | 0 => fun v => _ 
-               | S n => fun v => _
-             end q). 
-      {
-        refine (let diag n :=
-                    match n return t n -> Type with 
-                      | 0 => fun v => P 0 (h :: v)
-                      | S n => fun v => False -> True
-                    end 
-                in _
-                     
-               ).
-        refine (match v in t n' return diag n' v with 
-                  | nil => _
-                  | cons _ _ _ => _
-                end). 
-        simpl. apply bas. 
-        simpl. auto. 
-      }
-      {
-        apply rect.  apply rectS. 
-      }
-      Restart.
-      
       fix 2. intros n v.
-      invertp v. Show Proof. 
+      invert v.
       apply False_rect. 
       destruct n0.
-      { intros. invertp X.
+      { intros. invert X.
         apply bas. exact (fun a b c => False_rect _). }
-      { intros. apply rect. apply rectS. } Show Proof. 
-      
-
-      Restart. 
-      fix 2. intros n v. 
-      diag v D. 
-      refine (match v in t n' return diag n' v with 
-                | [] => _
-                | cons h m q => _
-              end
-             );simpl. 
-      auto. 
-      clear diag v n. 
-      refine (match m return forall (v : t m), P m (h::v) with
-               | 0 => fun v => _ 
-               | S n => fun v => _
-             end q). 
-      {
-        diag v D.         
-        refine (match v in t n' return diag n' v with 
-                  | nil => _
-                  | cons _ _ _ => _
-                end). 
-        simpl. apply bas. 
-        simpl. auto. 
-      }
-      {
-        apply rect.  apply rectS. 
-      }
-      Show Proof. 
-      Restart. 
-      fix 2. intros n v. 
-      invert v. auto. 
-      intros. 
-      destruct n0. 
-      {invert X. apply bas.  auto. }
-      {intros. apply rect. apply rectS. }
-      
+      { intros. apply rect. apply rectS. } Show Proof.
     Defined.
 End t.
