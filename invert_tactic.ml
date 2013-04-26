@@ -42,7 +42,8 @@ let mk_casei env sigma ind params term return_clause kf =
   in
   Term.mkCase (case_info,return_clause,term,branches)
 
-let mk_case_tac ind ind_family term return_clause subtac k = fun gl ->   
+let mk_case_tac ind_family term return_clause subtac k = fun gl ->   
+  let ind = fst (Inductiveops.dest_ind_family  ind_family) in
   let env = Tacmach.pf_env gl in
   let sigma = Tacmach.project gl in
   let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in
@@ -61,27 +62,41 @@ let mk_case_tac ind ind_family term return_clause subtac k = fun gl ->
 	  (branch_pre_ty, [|Inductiveops.build_dependent_constructor cs|]) in
 	let (specialized_ctx,expectation) =
 	  Reductionops.splay_prod_assum env sigma branch_ty in
+	let ctx = cs.Inductiveops.cs_args in
+	let branch_ty = Term.it_mkProd_or_LetIn branch_ty ctx in	  
 	match specialized_ctx with
 	| (_,_,ty) :: _
 	    when Reductionops.is_conv env sigma ty
 	      (Util.delayed_force Coqlib.build_coq_False) ->
-	  let body = Term.it_mkLambda_or_LetIn
-	    (Term.mkApp
-	       (Lazy.force false_rect, [|expectation; Term.mkRel 1|]))
-	    specialized_ctx	
+	  let body = 
+	    Term.it_mkLambda_or_LetIn
+	      (Term.mkApp
+		 (Lazy.force false_rect, [|expectation; Term.mkRel 1|]))
+	      specialized_ctx	
 	  in 
+	  let body = Term.it_mkLambda_or_LetIn body ctx in 
 	  build (succ i) l (body::acc ) gl
 	| _ -> 
 	  let name = (Names.id_of_string "invert_subgoal") in
 	  let name =  Tactics.fresh_id [] name gl in
 	  let t = Tactics.assert_tac  (Names.Name name) branch_ty in
 	  Tacticals.tclTHENS t
-	    [  Tacticals.tclTHEN (Tactics.clear l) subtac;
-	       build (succ i) (name :: l) ((Term.mkVar name) :: acc)
+	    [   Tacticals.tclTHEN (Tactics.clear l) subtac;
+		  (* Tacticals.tclIDTAC; *)
+		build (succ i) (name :: l) ((Term.mkVar name) :: acc)
 	    ] gl
       end
-    else 
-      k (Term.mkCase (case_info, return_clause, term, (Array.of_list (List.rev acc))))
+    else  
+      let return_clause =
+	let ctx = (Inductiveops.make_arity_signature env true ind_family) in
+	let return_clause = Term.lift (Term.rel_context_length ctx) return_clause  in
+	Term.it_mkLambda_or_LetIn
+	  (Term.mkApp (return_clause, Termops.extended_rel_vect 0 ctx))
+	  ctx
+      in 
+      let term = Term.mkCase (case_info, return_clause, term, (Array.of_list (List.rev acc))) in 
+      Print.(eprint (constr term));
+      k term gl 
   in 
   build 0 [] [] gl 
 
@@ -360,6 +375,7 @@ let pose_diag h name gl =
   
 
 let invert h gl =
+  
   let env = Tacmach.pf_env gl in
   let sigma = Tacmach.project gl in
   let h_ty = Tacmach.pf_get_hyp_typ gl h in
@@ -369,65 +385,30 @@ let invert h gl =
   (* get the name of the inductive and the list of arguments it is applied to *)
   let diag,l = matched_type2diag env sigma (Term.mkVar h) h_ty pre_concl in
   (* Each branch is a pair: type of the subgoal, body of the branch *)
-  let (ind_family, _) =
-    Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma h_ty) in
-  
-  let constructors = Inductiveops.get_constructors env ind_family in
-  let branches diag =
-    Array.map
-      (fun cs ->
-	let ctx = cs.Inductiveops.cs_args in
-	(* Print.(eprint (group (string "branches/ctx" ^/^ group (rel_context ctx)))); *)
-	let t = Term.mkApp (diag, cs.Inductiveops.cs_concl_realargs) in
-	let t = Term.mkApp (t, [| Inductiveops.build_dependent_constructor cs |]) in
-	let ty = Term.it_mkProd_or_LetIn t ctx in
-	let body p = p
-	in
-	ty, body
-      )
-      constructors
-  in
+  let (ind_family, _) = Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma h_ty) in
+
   Print.(eprint (stripes( string "final diag") ^/^ constr diag));
   cps_mk_letin "diag" diag
-    (fun diag ->
-      let branches = branches (Term.mkVar diag) in
-      assert_vector
-	(Array.map fst branches)
-	(
+    (fun diag' gl ->
+      let subtac =
 	  Tacticals.tclTHENLIST
-	    [Tactics.unfold_constr (Globnames.VarRef diag);
-	     Tactics.clear (diag :: h :: (List.fold_left (fun acc x -> 
+	    [Tactics.unfold_constr (Globnames.VarRef diag');
+	     Tactics.clear (diag' :: h :: (List.fold_left (fun acc x -> 
 	       match x with 
 	       | ST.Var n -> n::acc
 	       | _ -> acc
 	     ) [] l))
-	    ])
-	(fun vect gl ->
-	  let env = Tacmach.pf_env gl in
-	  (* extra information for the match *)
-	  let ind = fst (Inductiveops.dest_ind_family  ind_family) in
-	  let case_info = Inductiveops.make_case_info env ind  Term.RegularStyle in
-	  let return_clause =
-	    let ctx = (Inductiveops.make_arity_signature env true ind_family) in
-	    Term.it_mkLambda_or_LetIn
-	      (Term.mkApp (Term.mkVar diag, Termops.extended_rel_vect 0 ctx))
-	      ctx
-	  in
-	  let term =
-	    Term.mkCase
-	      (case_info,
-	       return_clause,
-	       Term.mkVar h,
-	       Array.mapi
-		 (
-		   fun i (_,t) ->
-		     (t (Term.mkVar vect.(i)))
-		 ) branches
-	      )
-	  in 
-	  let term = Term.applistc term (List.map ST.name_to_constr l) in 
-	  Tactics.refine term gl
-	)
+	    ]
+      in
+      mk_case_tac ind_family (Term.mkVar h) (Term.mkVar diag') subtac
+	(
+	  fun term -> 
+	    Print.(eprint (string "HERE!!!!"));
+	    let term = Term.applistc term (List.map ST.name_to_constr l) in 
+	    Tactics.refine term
+	) gl
     ) gl
+    
+	
 
 

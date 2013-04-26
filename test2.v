@@ -29,19 +29,20 @@ Definition rect2 (P:forall {n}, vector n -> vector n -> Type)
 Proof.
 fix 2.
 intros n v1. invert v1.
- + intros v2; invert v2. assumption. exact (fun _ _ _ => False_rect _).
+ + intros v2. invert v2. assumption. 
  + intros m t1 q1 v2.
-   invert v2. exact (False_rect _).
+   invert v2. 
    intros m' t2 q2 q1'. apply rect. apply rect2.
 Defined.
 Print rect2.
 
 Lemma l3 n h v : 
   P (S (S n)) (cons (S n) h v) -> P (S n) v.
-Proof. intros H.
-       invert H.
-       auto.
-       destruct n0; auto. Show Proof.
+Proof. 
+  intros H.
+  invert H.
+  auto.
+  destruct n0; auto. Show Proof.
 Qed.
 
 End t.
