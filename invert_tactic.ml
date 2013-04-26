@@ -171,7 +171,7 @@ let rec split_tree2diag
     let (name_argx,ty_argx,return_type) = 
       try 
 	Term.destProd
-	  (Reductionops.whd_betaiota sigma return_type) 
+	  (Reductionops.whd_betaiotazeta sigma return_type) 
       with e -> 	  Print.(eprint (constr return_type)); raise e
     in
     (* The first thing to do is to introduce the variable we are
@@ -250,8 +250,7 @@ and matched_type2diag env sigma (tm: Term.constr) ty pre_concl =
   generalized_hyps
 and prepare_conclusion env concl stl : ST.name list * Term.constr = 
   let ctx0 = Environ.rel_context env in 
-  let ctx1 = List.map (fun (id,body,ty) -> Names.Name id, body, ty) ( Environ.named_context env) in 
-  
+  let ctx1 = Environ.named_context env in 
   
   let rec occurs_check ty vars  = 
     match vars  with 
@@ -260,9 +259,9 @@ and prepare_conclusion env concl stl : ST.name list * Term.constr =
     | ST.Var v :: vars ->  Termops.dependent (Term.mkVar v) ty || occurs_check ty vars
   in
   (* Fold on a rel-context *)
-  let rec fold ctx vars args term pos add k =
+  let rec fold_ctx ctx vars args term pos add =
     match ctx with
-    | [] -> args, term, k
+    | [] -> args, term
     | ((name, None, ty) as decl)::q ->
       let vars' = ST.pop_vars vars in
       if occurs_check ty vars'  && not (List.mem (ST.Rel 1) vars') 
@@ -270,18 +269,38 @@ and prepare_conclusion env concl stl : ST.name list * Term.constr =
   	let args' = ST.Rel pos :: args in
 	let term' = Term.lift 1 term in
 	let term'' = Termops.replace_term (Term.mkRel (add + 1)) (Term.mkRel 1) term' in
-	fold q vars' args' (Term.mkProd (name, Term.lift pos ty, term'')) (succ pos) (succ add) (succ k)
+	fold_ctx q vars' args' (Term.mkProd (name, Term.lift pos ty, term'')) (succ pos) (succ add)
       else
-  	fold q vars' args term (succ pos) add k
+  	fold_ctx q vars' args term (succ pos) add
     | _ -> assert false
   in  
   (* fold on named-context *)
-  match ctx0 with 
-  | [] -> [], concl
-  | _::ctx -> 
-    let vars = ST.varsl stl in     
-    let args, concl, k = fold ctx (ST.pop_vars vars) [] concl 2 2 0 in
-    args, concl
+  let rec fold_names ctx vars args term =
+    match ctx with
+    | [] -> args, term
+    | ((id, None, ty) as decl)::q ->
+      if occurs_check ty vars && not (List.mem (ST.Var id) vars)
+      then
+  	let args' = ST.Var id :: args in
+  	let term' = Term.lift 1 term in
+  	let term'' = Termops.replace_term (Term.mkVar id) (Term.mkRel 1) term' in
+  	fold_names q vars args' (Term.mkProd (Names.Name id, ty, term''))
+      else
+  	fold_names q vars args term
+    | ((id, Some body, ty) as decl)::q ->
+      if occurs_check ty vars && not (List.mem (ST.Var id) vars)
+      then
+  	let term' = Term.lift 1 term in
+  	let term'' = Termops.replace_term (Term.mkVar id) (Term.mkRel 1) term' in
+  	fold_names q vars args (Term.mkLetIn (Names.Name id, ty, body, term''))
+      else
+  	fold_names q vars args term
+    | _ -> assert false
+  in
+  let vars = ST.varsl stl in
+  match ctx0 with
+  | [] -> (* fold_names ctx1 vars [] concl *) [], concl
+  | _::ctx -> fold_ctx ctx (ST.pop_vars vars) [] concl 2 2
     
 (** Debug version, that only try to construct the diag *)
 let pose_diag h name gl =
@@ -304,11 +323,11 @@ let invert h gl =
   (** ensures that the name x is fresh in the _first_ goal *)
   let (!!) x = Tactics.fresh_id [] ((Names.id_of_string x)) gl in
   (* get the name of the inductive and the list of arguments it is applied to *)
-  let diag,[] = matched_type2diag env sigma (Term.mkVar h) h_ty pre_concl in
+  let diag,l = matched_type2diag env sigma (Term.mkVar h) h_ty pre_concl in
   (* Each branch is a pair: type of the subgoal, body of the branch *)
   let (ind_family, _) =
     Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma h_ty) in
-
+  
   let constructors = Inductiveops.get_constructors env ind_family in
   let branches diag =
     Array.map
@@ -357,7 +376,8 @@ let invert h gl =
 		     (t (Term.mkVar vect.(i)))
 		 ) branches
 	      )
-	  in
+	  in 
+	  let term = Term.applistc term (List.map ST.name_to_constr l) in 
 	  Tactics.refine term gl
 	)
     ) gl

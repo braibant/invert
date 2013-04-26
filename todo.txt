@@ -6,3 +6,4 @@
 - Ameliorer l'interface utilisateur
 - Eliminer les cassures inutiles (casser les nat, si tu casses les
   vects).
+- Ne pas expanser les letins dans les rel-contexts... 
