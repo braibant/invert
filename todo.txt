@@ -1,0 +1,8 @@
+- Gerer les variables (aller jusque destruct)
+- Eliminer les false_rect a top level
+- Gerer les termes
+- Gerer les non-linearites non dirigees par les types (les tetes des
+  vecteurs)
+- Ameliorer l'interface utilisateur
+- Eliminer les cassures inutiles (casser les nat, si tu casses les
+  vects).
