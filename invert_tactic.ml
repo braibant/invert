@@ -71,6 +71,9 @@ module ST = struct
 
     
   let make env sigma (args: Term.constr list) : t list =
+    Print.(eprint 
+	     (prefix 2 2 (string "args")
+	     (separate_map semi constr args)));
     let rec aux arg : t  =
       let (hd,tl) = Reductionops.whd_betadeltaiota_stack env sigma arg in
       match Term.kind_of_term hd with
@@ -80,7 +83,9 @@ module ST = struct
 	let params,real_args = CList.chop (Inductiveops.inductive_nparams ind) tl in
 	let constrs = List.map aux real_args in
 	Constructor (ind, i, params, constrs)
-      | _ -> invalid_arg "todo"
+      | _ -> 
+	Print.(eprint (constr hd));
+	invalid_arg "todo"
     in
     List.map aux args
       
@@ -198,15 +203,10 @@ let rec split_tree2diag
 	 (* We transform the return clause in a recursive call to
 	    [invert]. The thing to invert is the argment we destruct
 	    on and the conclusion we want is [forall stt -> Type] *)
+	 
 	 let return_clause,args =
-	   (* In our running example, ind_args is [S @1] and ctx is
-	      [vector @1; nat]. Then, we must lift the arguments by
-	      one to account for the introduction of the "as" clause
-	      that we represent as Rel 1. *)
-	   let ind_args = snd (Term.decompose_app ty_argx) in
-	   let ind_args = List.map (Term.lift 1) ind_args in
 	   let result,args = 
-	     matched_type2diag env sigma (Term.mkRel 1) ind_family ind_args return_type 
+	     matched_type2diag env sigma (Term.mkRel 1) (Term.lift 1 ty_argx) return_type 
 	   in
 	   (* put the result in eta long form *)
 	   let ctx = Inductiveops.make_arity_signature env true ind_family in
@@ -235,7 +235,9 @@ let rec split_tree2diag
 	   (mk_casei env sigma ind params (Term.mkRel 1) return_clause real_body)
 	   (List.map Term.mkRel args)
       )
-and matched_type2diag env sigma (tm: Term.constr) ind_family real_args pre_concl =
+and matched_type2diag env sigma (tm: Term.constr) ty pre_concl =
+  let (ind_family, real_args) =
+    Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma ty) in
   let (_,sort_family) = Inductiveops.get_arity env ind_family in
   let split_trees = ST.make env sigma (real_args @ [ tm ]) in
   let generalized_hyps,concl = prepare_conclusion env pre_concl split_trees  in
@@ -280,10 +282,7 @@ let pose_diag h name gl =
   let h_ty = Tacmach.pf_get_hyp_typ gl h in
   let pre_concl = Tacmach.pf_concl gl in
   (* get the name of the inductive and the list of arguments it is applied to *)
-  let (ind_family, real_args) =
-    Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma h_ty) in
-  let diag,[] = matched_type2diag env sigma (Term.mkVar h)
-    ind_family real_args pre_concl in
+  let diag,[] = matched_type2diag env sigma (Term.mkVar h) h_ty pre_concl in
   Print.(eprint (stripes( string "final diag") ^/^ constr diag));
   cps_mk_letin "diag" diag (fun k -> Tacticals.tclIDTAC) gl
 
@@ -297,11 +296,11 @@ let invert h gl =
   (** ensures that the name x is fresh in the _first_ goal *)
   let (!!) x = Tactics.fresh_id [] ((Names.id_of_string x)) gl in
   (* get the name of the inductive and the list of arguments it is applied to *)
-  let (ind_family, real_args) =
-    Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma h_ty) in
-  let diag,[] = matched_type2diag env sigma (Term.mkVar h)
-    ind_family real_args pre_concl in
+  let diag,[] = matched_type2diag env sigma (Term.mkVar h) h_ty pre_concl in
   (* Each branch is a pair: type of the subgoal, body of the branch *)
+  let (ind_family, _) =
+    Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma h_ty) in
+
   let constructors = Inductiveops.get_constructors env ind_family in
   let branches diag =
     Array.map
