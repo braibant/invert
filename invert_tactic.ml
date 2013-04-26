@@ -42,6 +42,49 @@ let mk_casei env sigma ind params term return_clause kf =
   in
   Term.mkCase (case_info,return_clause,term,branches)
 
+let mk_case_tac ind ind_family term return_clause subtac k = fun gl ->   
+  let env = Tacmach.pf_env gl in
+  let sigma = Tacmach.project gl in
+  let case_info = Inductiveops.make_case_info env ind Term.RegularStyle in
+  let (constructors: Inductiveops.constructor_summary array) =
+    Inductiveops.get_constructors env ind_family in
+  let rec build i l acc : Proof_type.tactic = fun gl ->
+    if i < Array.length constructors
+    then
+      begin 
+	let cs = constructors.(i) in 
+	let lifted_return =
+	  Term.lift cs.Inductiveops.cs_nargs return_clause in
+	let branch_pre_ty =
+	  Term.mkApp (lifted_return, cs.Inductiveops.cs_concl_realargs) in
+	let branch_ty = Term.mkApp
+	  (branch_pre_ty, [|Inductiveops.build_dependent_constructor cs|]) in
+	let (specialized_ctx,expectation) =
+	  Reductionops.splay_prod_assum env sigma branch_ty in
+	match specialized_ctx with
+	| (_,_,ty) :: _
+	    when Reductionops.is_conv env sigma ty
+	      (Util.delayed_force Coqlib.build_coq_False) ->
+	  let body = Term.it_mkLambda_or_LetIn
+	    (Term.mkApp
+	       (Lazy.force false_rect, [|expectation; Term.mkRel 1|]))
+	    specialized_ctx	
+	  in 
+	  build (succ i) l (body::acc ) gl
+	| _ -> 
+	  let name = (Names.id_of_string "invert_subgoal") in
+	  let name =  Tactics.fresh_id [] name gl in
+	  let t = Tactics.assert_tac  (Names.Name name) branch_ty in
+	  Tacticals.tclTHENS t
+	    [  Tacticals.tclTHEN (Tactics.clear l) subtac;
+	       build (succ i) (name :: l) ((Term.mkVar name) :: acc)
+	    ] gl
+      end
+    else 
+      k (Term.mkCase (case_info, return_clause, term, (Array.of_list (List.rev acc))))
+  in 
+  build 0 [] [] gl 
+
 
 module ST = struct
   type name =
@@ -313,13 +356,14 @@ let pose_diag h name gl =
   Print.(eprint (stripes( string "final diag") ^/^ constr diag));
   cps_mk_letin "diag" diag (fun k -> Tacticals.tclIDTAC) gl
 
+  
+  
 
 let invert h gl =
   let env = Tacmach.pf_env gl in
   let sigma = Tacmach.project gl in
   let h_ty = Tacmach.pf_get_hyp_typ gl h in
   let pre_concl = Tacmach.pf_concl gl in
-
   (** ensures that the name x is fresh in the _first_ goal *)
   let (!!) x = Tactics.fresh_id [] ((Names.id_of_string x)) gl in
   (* get the name of the inductive and the list of arguments it is applied to *)
