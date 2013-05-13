@@ -18,10 +18,9 @@ Section t.
     Proof.
       fix 2. intros n v.
       invert v.
-      apply False_rect. 
       destruct n0.
       { intros. invert X.
-        apply bas. exact (fun a b c => False_rect _). }
+        apply bas. }
       { intros. apply rect. apply rectS. } Show Proof.
     Defined.
 End t.

@@ -18,7 +18,6 @@ Section t.
   Proof. 
     intros H.
     invert H. 
-    auto.
     auto. 
     Show Proof. 
   Qed. 

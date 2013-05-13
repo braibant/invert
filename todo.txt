@@ -1,4 +1,3 @@
-- Eliminer les false_rect a top level
 - Gerer les termes
 - Gerer les non-linearites non dirigees par les types (les tetes des
   vecteurs)

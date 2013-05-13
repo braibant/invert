@@ -56,7 +56,7 @@ let assert_vector
 	let name = (Names.id_of_string "invert_subgoal") in
 	let name =  Tactics.fresh_id [] name goal in
 	(* let _ = Format.printf "assert vector subgoal %i: %a\n%!" i pp_constr c.(i) in *)
-	let t = (Tactics.assert_tac  (Names.Name name) c.(i)) in
+ 	let t = (Tactics.assert_tac  (Names.Name name) c.(i)) in
 	Tacticals.tclTHENS t
 	  [  Tacticals.tclTHEN (Tactics.clear l) subtac;
 	    aux (succ i) (name :: l)] goal

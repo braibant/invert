@@ -33,7 +33,7 @@ Qed.
 
 Lemma l2:  forall n, even (2 + n) -> even n.
   intros.
-  invert H. simpl.  auto. simpl. auto. Show Proof.
+  invert H.  auto.  Show Proof. 
 Qed.
 
 Lemma l3:  forall n, even (2 + n) -> even n.

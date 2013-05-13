@@ -9,6 +9,5 @@ Proof.
   tauto. 
   intros e2. 
   revert IHe. remember (n+m) as x.  invert e2. 
-  tauto. 
   intros. auto. 
 Qed. 

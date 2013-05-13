@@ -7,6 +7,11 @@ test2.v
 test3.v
 test4.v
 test5.v
+test6.v
+test7.v
+test8.v
+test9.v
+test10.v
 
 -custom "" print.cmo invert.cmo
 -custom "" print.cmx invert.cmx
