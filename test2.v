@@ -29,7 +29,7 @@ Definition rect2 (P:forall {n}, vector n -> vector n -> Type)
 Proof.
 fix 2.
 intros n v1. invert v1.
- + intros v2. invert v2. assumption. 
+ + intros v2. invert v2. auto.   
  + intros m t1 q1 v2.
    invert v2. 
    intros m' t2 q2 q1'. apply rect. apply rect2.

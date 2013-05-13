@@ -94,6 +94,216 @@ let mk_case_tac ind_family term return_clause subtac k = fun gl ->
   build 0 [] [] gl
 
 
+
+let rec split_tree2diag
+    env sigma
+    (split_trees: Term.constr list)
+    (return_type: Term.types)
+    (concl: Term.constr)
+    =
+  (* Print.( *)
+  (*   let doc = messages *)
+  (*     ["stl", ST.pp_tl split_trees; *)
+  (*      "return_type", constr return_type; *)
+  (*      "concl", constr concl; *)
+  (*     ] *)
+  (*   in *)
+  (*   let msg = surround 2 2 (string "begin") doc (string "end") in *)
+  (*   eprint msg *)
+  (* ); *)
+  match split_trees with
+  | [] -> concl
+  | head::ll ->        
+    let (name_argx,ty_argx,return_type) =
+	Term.destProd
+	  (Reductionops.whd_betaiotazeta sigma return_type)
+    in
+    (* The first thing to do is to introduce the variable we are
+       working on and do the lift accordingly.
+
+       This variable has type [ty_argx] == [I pi ai].  *)
+    Term.mkLambda
+      (name_argx,ty_argx,
+       (* we lift head, ll and the conclusion to accound for the previous binder *)
+       let head = Term.lift 1 head in 
+       let ll = List.map (Term.lift 1) ll in 
+       let concl = Term.lift 1 concl in
+
+       (* we update the environment to account for the binder *)
+       let env = Environ.push_rel (name_argx,None,ty_argx) env in
+       
+       (* we can now reduce the head *)
+       let (hd,tl) = Reductionops.whd_betadeltaiota_stack env sigma head in
+       match Term.kind_of_term hd with
+       | Term.Var _  | Term.Rel _ when CList.is_empty tl -> 
+	 split_tree2diag env sigma
+	   (List.map (Termops.replace_term hd (Term.mkRel 1)) ll)
+	   return_type
+	   (Termops.replace_term hd (Term.mkRel 1) concl)
+       | Term.Construct (ind, constructor) ->
+	 let params,split_trees = CList.chop (Inductiveops.inductive_nparams ind) tl in
+	 let return_clause,args =
+	   matched_type2diag env sigma (Term.mkRel 1) (Term.lift 1 ty_argx) return_type
+	 in (*we have the return clause *)
+	 let real_body i cs branch_ty specialized_ctx =
+	   if i + 1 = constructor
+	   then (* recursive call *)
+	     split_tree2diag env sigma
+	       (split_trees@args@ll)
+	       (Termops.it_mkProd_or_LetIn branch_ty cs.Inductiveops.cs_args)
+	       concl
+	   else
+	     (* otherwise, in the underscore case, we return
+		[False -> True] *)
+	     Term.it_mkLambda_or_LetIn
+	       devil
+	       (List.append specialized_ctx cs.Inductiveops.cs_args)
+ 	 in
+	 Term.applistc
+	   (mk_casei env sigma ind params (Term.mkRel 1) return_clause real_body)
+	   args
+      )
+and matched_type2diag env sigma (tm: Term.constr) ty pre_concl =
+  let (ind_family, real_args) =
+    Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma ty) in
+  let (_,sort_family) = Inductiveops.get_arity env ind_family in
+  let split_trees = real_args @ [ tm ] in
+  let generalized_hyps,concl = prepare_conclusion env pre_concl split_trees  in
+  Print.(
+    eprint (
+      messages ["hyps", separate_map semi constr generalized_hyps;
+		"concl", constr concl]
+    )
+  );
+  let sort = Termops.new_sort_in_family sort_family in
+  let return_type = Inductiveops.make_arity env true ind_family sort in
+  let result = split_tree2diag env sigma split_trees return_type concl in
+  (* put the result in eta long form *)
+  let ctx = Inductiveops.make_arity_signature env true ind_family in
+  let lifted_result = Term.lift (Term.rel_context_length ctx) result in
+  let result' =
+    Termops.it_mkLambda_or_LetIn
+      (Reductionops.whd_beta sigma
+	 (Term.mkApp (lifted_result,Termops.extended_rel_vect 0 ctx))) ctx in
+  result', generalized_hyps
+and prepare_conclusion env concl stl : Term.constr list * Term.constr =
+  (* We have to generalize the elements of the context (either de
+     Bruijn or vars) whose type [t] is such that there exists an
+     element [e] of the stl such that [e] is a subterm of [t].
+     
+     Note that we cannot consider the [stl] as a pure list of term,
+     since, e.g., [S m] would be considered as a whole, while we would
+     like to consider  [m]. 
+     
+     Therefore, we fold on the context, and introduces these
+     generalizations. *)
+  let rec popl = function 
+    | [] -> []
+    | hd :: q -> match Term.kind_of_term hd with 
+      | Term.Var x -> hd :: popl q
+      | Term.Rel i -> if i > 1 then Term.mkRel (i - 1) :: popl q
+	else popl q
+      | _ -> popl q
+  in
+  
+  let rec fold_rel_context args term n stl = function 
+    | [] -> args, term
+    | (name, None, ty) :: ctx -> 
+      if 
+	List.exists (fun t -> Termops.dependent t ty) stl 
+	&& not (List.mem (Term.mkRel 1) stl)
+      then
+	let args = Term.mkRel n :: args in 
+	let term = Termops.replace_term (Term.mkRel n) (Term.mkRel 1) (Term.lift 1 term) in 
+	fold_rel_context args (Term.mkProd (name, ty,term))  
+	  (succ n) 
+	  (popl stl)
+	  ctx
+      else
+	fold_rel_context args term (succ n) (popl stl) ctx 
+  in 
+  let rec fold_named_context args term stl = function 
+    | [] -> args, term
+    | (name,body,ty) :: ctx ->      
+      if 
+	(List.exists (fun t -> Termops.dependent t ty) stl )	
+	&& not (List.mem (Term.mkVar name) stl)
+      then 	
+	let term = Termops.replace_term (Term.mkVar name) (Term.mkRel 1) (Term.lift 1 term) in 
+	match body with 
+	| None -> 
+	  fold_named_context (Term.mkVar name :: args) (Term.mkProd (Names.Name name, ty,term))  
+	    (popl stl)
+	    ctx
+	| Some def -> 
+	  fold_named_context  args (Term.mkLetIn (Names.Name name, ty, def, term))
+	    (popl stl)
+	    ctx
+      else 
+	fold_named_context args term stl ctx
+  in 
+  let args, term = fold_rel_context   []   concl 1 stl (Environ.rel_context env) in 
+  let args', term' = fold_named_context args term    stl (Environ.named_context env) in 
+  Print.(
+    let doc = 
+      messages 
+	["concl",constr concl; 
+	 "stl", separate_map semi constr stl;
+	 "args", separate_map semi constr args;
+	 "term", constr term;
+	 "args'", separate_map semi constr args';
+	 "term'", constr term';
+	]
+    in 
+    eprint (prefix 2 2 (string "prepare") doc)
+  );
+  args, term 
+  
+(** Debug version, that only try to construct the diag *)
+let pose_diag h name gl =
+  let env = Tacmach.pf_env gl in
+  let sigma = Tacmach.project gl in
+  let h_ty = Tacmach.pf_get_hyp_typ gl h in
+  let pre_concl = Tacmach.pf_concl gl in
+  (* get the name of the inductive and the list of arguments it is applied to *)
+  let diag,_ = matched_type2diag env sigma (Term.mkVar h) h_ty pre_concl in
+  Print.(eprint (stripes( string "final diag") ^/^ constr diag));
+  cps_mk_letin "diag" diag (fun k -> Tacticals.tclIDTAC) gl
+
+let invert h gl =
+  let env = Tacmach.pf_env gl in
+  let sigma = Tacmach.project gl in
+  let h_ty = Tacmach.pf_get_hyp_typ gl h in
+  let pre_concl = Tacmach.pf_concl gl in
+  (** ensures that the name x is fresh in the _first_ goal *)
+  let (!!) x = Tactics.fresh_id [] ((Names.id_of_string x)) gl in
+  (* get the name of the inductive and the list of arguments it is applied to *)
+  let diag,l = matched_type2diag env sigma (Term.mkVar h) h_ty pre_concl in
+  Print.(eprint (stripes( string "final diag") ^/^ constr diag));
+  Print.(
+    eprint (
+      messages ["clear", separate_map semi constr l]
+    )
+  );
+
+  (* Each branch is a pair: type of the subgoal, body of the branch *)
+  let (ind_family, _) = Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma h_ty) in
+
+      let subtac =
+	   Tactics.clear (h :: (List.fold_left (fun acc x ->
+	       match Term.kind_of_term x with
+	       | Term.Var n -> n::acc
+	       | _ -> acc
+	     ) [] l))
+      in
+      mk_case_tac ind_family (Term.mkVar h) diag subtac
+	(
+	  fun term ->
+	    let term = Term.applistc term l in
+	    Tactics.refine term
+	) gl
+
+
 module ST = struct
   type name =
   | Var of Names.Id.t
@@ -198,188 +408,3 @@ module ST = struct
       st
             
 end
-
-let rec split_tree2diag
-    env sigma
-    (split_trees: ST.t list)
-    (return_type: Term.types)
-    (concl: Term.constr)
-    =
-  (* Print.( *)
-  (*   let doc = messages *)
-  (*     ["stl", ST.pp_tl split_trees; *)
-  (*      "return_type", constr return_type; *)
-  (*      "concl", constr concl; *)
-  (*     ] *)
-  (*   in *)
-  (*   let msg = surround 2 2 (string "begin") doc (string "end") in *)
-  (*   eprint msg *)
-  (* ); *)
-  let split_trees = ST.liftl 1 split_trees in
-  match split_trees with
-  | [] -> concl
-  | head::ll ->
-    let (name_argx,ty_argx,return_type) =
-	Term.destProd
-	  (Reductionops.whd_betaiotazeta sigma return_type)
-    in
-    (* The first thing to do is to introduce the variable we are
-       working on and do the lift accordingly.
-
-       This variable has type [ty_argx] == [I pi ai].  *)
-    Term.mkLambda
-      (name_argx,ty_argx,
-       let env = Environ.push_rel (name_argx,None,ty_argx) env in
-       let concl = Term.lift 1 concl in
-
-       match head with
-       | ST.Leaf v ->
-	 split_tree2diag env sigma
-	   (List.map (ST.replace v (ST.Rel 1)) ll)
-	   return_type
-	   (ST.replace_term  v (Term.mkRel 1) concl)
-       | ST.Constructor (ind, constructor, params, split_trees) ->
-	 (* we want to refine in the [constructor] constructor case. *)
-	 (* We need to build the return clause and the branches.
-
-	    Let's take the example where we match on v: vector (S n),
-	    to build the predicate P n v
-
-	    The return clause is: fun k => match k with | 0 => fun v
-	    => False -> True | S m => fun v => P (S m) v -> Type end
-
-	    The branches should be: nil => False -> True cons m x q :
-	    vector (S m) => P m (cons m x q) *)
-
-	 (* We transform the return clause in a recursive call to
-	    [invert]. The thing to invert is the argment we destruct
-	    on and the conclusion we want is [forall stt -> Type] *)
-
-	 let return_clause,args =
-	   matched_type2diag env sigma (Term.mkRel 1) (Term.lift 1 ty_argx) return_type
-	 in (*we have the return clause *)
-	 let real_body i cs branch_ty specialized_ctx =
-	   if i + 1 = constructor
-	   then (* recursive call *)
-	     split_tree2diag env sigma
-	       (split_trees@List.map (fun x -> ST.Leaf x) args@ll)
-	       (Termops.it_mkProd_or_LetIn branch_ty cs.Inductiveops.cs_args)
-	       concl
-	   else
-	     (* otherwise, in the underscore case, we return
-		[False -> True] *)
-	     Term.it_mkLambda_or_LetIn
-	       devil
-	       (List.append specialized_ctx cs.Inductiveops.cs_args)
- 	 in
-	 Term.applistc
-	   (mk_casei env sigma ind params (Term.mkRel 1) return_clause real_body)
-	   (List.map ST.name_to_constr args)
-      )
-and matched_type2diag env sigma (tm: Term.constr) ty pre_concl =
-  let (ind_family, real_args) =
-    Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma ty) in
-  let (_,sort_family) = Inductiveops.get_arity env ind_family in
-  let split_trees = ST.make env sigma (real_args @ [ tm ]) in
-  let generalized_hyps,concl = prepare_conclusion env pre_concl split_trees  in
-  let sort = Termops.new_sort_in_family sort_family in
-  let return_type = Inductiveops.make_arity env true ind_family sort in
-  let result = split_tree2diag env sigma split_trees return_type concl in
-  (* put the result in eta long form *)
-  let ctx = Inductiveops.make_arity_signature env true ind_family in
-  let lifted_result = Term.lift (Term.rel_context_length ctx) result in
-  let result' =
-    Termops.it_mkLambda_or_LetIn
-      (Reductionops.whd_beta sigma
-	 (Term.mkApp (lifted_result,Termops.extended_rel_vect 0 ctx))) ctx in
-  result', generalized_hyps
-and prepare_conclusion env concl stl : ST.name list * Term.constr =
-  let ctx0 = Environ.rel_context env in
-  let ctx1 = Environ.named_context env in
-
-  let rec occurs_check ty vars  =
-    match vars  with
-    | [] -> false
-    | ST.Rel i :: vars ->  Termops.dependent (Term.mkRel i) ty || occurs_check ty vars
-    | ST.Var v :: vars ->  Termops.dependent (Term.mkVar v) ty || occurs_check ty vars
-  in
-  (* Fold on a rel-context *)
-  let rec fold_ctx ctx vars args term pos add =
-    match ctx with
-    | [] -> args, term
-    | ((name, None, ty) as decl)::q ->
-      let vars' = ST.pop_vars vars in
-      if occurs_check ty vars'  && not (List.mem (ST.Rel 1) vars')
-      then
-  	let args' = ST.Rel pos :: args in
-	let term' = Term.lift 1 term in
-	let term'' = Termops.replace_term (Term.mkRel (add + 1)) (Term.mkRel 1) term' in
-	fold_ctx q vars' args' (Term.mkProd (name, Term.lift pos ty, term'')) (succ pos) (succ add)
-      else
-  	fold_ctx q vars' args term (succ pos) add
-    | _ -> assert false
-  in
-  (* fold on named-context *)
-  let rec fold_names ctx vars args term =
-    match ctx with
-    | [] -> args, term
-    | ((id, None, ty) as decl)::q ->
-      if occurs_check ty vars && not (List.mem (ST.Var id) vars)
-      then
-  	let args' = ST.Var id :: args in
-  	let term' = Term.lift 1 term in
-  	let term'' = Termops.replace_term (Term.mkVar id) (Term.mkRel 1) term' in
-  	fold_names q vars args' (Term.mkProd (Names.Name id, ty, term''))
-      else
-  	fold_names q vars args term
-    | ((id, Some body, ty) as decl)::q ->
-      if occurs_check ty vars && not (List.mem (ST.Var id) vars)
-      then
-  	let term' = Term.lift 1 term in
-  	let term'' = Termops.replace_term (Term.mkVar id) (Term.mkRel 1) term' in
-  	fold_names q vars args (Term.mkLetIn (Names.Name id, ty, body, term''))
-      else
-  	fold_names q vars args term
-    | _ -> assert false
-  in
-  let vars = ST.varsl stl in
-  match ctx0 with
-  | [] -> fold_names ctx1 vars [] concl
-  | _::ctx -> fold_ctx ctx (ST.pop_vars vars) [] concl 2 2
-
-(** Debug version, that only try to construct the diag *)
-let pose_diag h name gl =
-  let env = Tacmach.pf_env gl in
-  let sigma = Tacmach.project gl in
-  let h_ty = Tacmach.pf_get_hyp_typ gl h in
-  let pre_concl = Tacmach.pf_concl gl in
-  (* get the name of the inductive and the list of arguments it is applied to *)
-  let diag,_ = matched_type2diag env sigma (Term.mkVar h) h_ty pre_concl in
-  Print.(eprint (stripes( string "final diag") ^/^ constr diag));
-  cps_mk_letin "diag" diag (fun k -> Tacticals.tclIDTAC) gl
-
-let invert h gl =
-  let env = Tacmach.pf_env gl in
-  let sigma = Tacmach.project gl in
-  let h_ty = Tacmach.pf_get_hyp_typ gl h in
-  let pre_concl = Tacmach.pf_concl gl in
-  (** ensures that the name x is fresh in the _first_ goal *)
-  let (!!) x = Tactics.fresh_id [] ((Names.id_of_string x)) gl in
-  (* get the name of the inductive and the list of arguments it is applied to *)
-  let diag,l = matched_type2diag env sigma (Term.mkVar h) h_ty pre_concl in
-  (* Each branch is a pair: type of the subgoal, body of the branch *)
-  let (ind_family, _) = Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma h_ty) in
-
-      let subtac =
-	   Tactics.clear (h :: (List.fold_left (fun acc x ->
-	       match x with
-	       | ST.Var n -> n::acc
-	       | _ -> acc
-	     ) [] l))
-      in
-      mk_case_tac ind_family (Term.mkVar h) diag subtac
-	(
-	  fun term ->
-	    let term = Term.applistc term (List.map ST.name_to_constr l) in
-	    Tactics.refine term
-	) gl
