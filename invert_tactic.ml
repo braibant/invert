@@ -190,6 +190,12 @@ and matched_type2diag env sigma (tm: Term.constr) ty pre_concl =
   let ctx = Inductiveops.make_arity_signature env true ind_family in
   eta_long env sigma ctx result, generalized_hyps
 and prepare_conclusion env concl stl : Term.constr list * Term.constr =
+  Print.(
+    let doc = messages ["concl", constr concl;
+			"stl", separate_map semi constr stl]
+    in 
+    eprint (prefix 2 2 (string "prepare") doc)
+  );
   (* We have to generalize the elements of the context (either de
      Bruijn or vars) whose type [t] is such that there exists an
      element [e] of the stl such that [e] is a subterm of [t].
@@ -204,12 +210,20 @@ and prepare_conclusion env concl stl : Term.constr list * Term.constr =
   (* collect the set of variables (in a broad sense) that occurs in the stl *)
   let vars = List.fold_right (fun t -> Names.Id.Set.union (Termops.collect_vars t)) stl Names.Id.Set.empty in
   let rels = List.fold_right (fun t -> Int.Set.union (Termops.free_rels t)) stl Int.Set.empty in
-  let rels = Int.Set.remove 1 rels in 
-  let dependent ty  =
+  let rels = Int.Set.remove 1 rels in
+  let dependent ?excluded ty =
+    let vars = match excluded with
+      | None -> vars
+      | Some v -> (Names.Id.Set.remove v vars)
+    in
     Names.Id.Set.exists (fun n -> Termops.occur_var env n ty) vars
     || Int.Set.exists  (fun i -> Termops.dependent (Term.mkRel i) ty) rels
   in
-
+  let tag n b =
+    match n with
+    | Names.Name id ->
+      Names.Name (Names.Id.of_string (Names.Id.to_string id ^ b))
+  in
   let rec fold_rel_context args term n m = function
     | [] -> args, term
     | (name, None, ty) :: ctx ->
@@ -220,7 +234,7 @@ and prepare_conclusion env concl stl : Term.constr list * Term.constr =
 	fold_rel_context args (Term.mkProd (name, Term.lift m ty,term))
 	  (succ n)
 	  (succ m)
- 	  ctx
+	  ctx
       else
 	fold_rel_context args term n (succ m) ctx
   in
@@ -228,13 +242,14 @@ and prepare_conclusion env concl stl : Term.constr list * Term.constr =
     | [] -> args, term
     | (name,body,ty) :: ctx ->
       if
-	dependent ty
-	&& not (List.mem (Term.mkVar name) stl)
+	dependent ~excluded:name ty
+	&& not (Names.Id.Set.mem name vars)
       then
 	let term = Termops.replace_term (Term.mkVar name) (Term.mkRel 1) (Term.lift 1 term) in
 	match body with
 	| None ->
-	  fold_named_context (Term.mkVar name :: args) (Term.mkProd (Names.Name name, ty,term))
+	  fold_named_context (Term.mkVar name :: args)
+	    (Term.mkProd (tag (Names.Name name) "foo", ty,term))
 	    ctx
 	| Some def ->
 	  fold_named_context  args (Term.mkLetIn (Names.Name name, ty, def, term))
@@ -245,7 +260,7 @@ and prepare_conclusion env concl stl : Term.constr list * Term.constr =
   match Environ.rel_context env with
   | [] -> fold_named_context [] concl  (Environ.named_context env)
   | _::ctx -> fold_rel_context   []   concl 2 2  ctx
-    
+
 (** Debug version, that only try to construct the diag *)
 let pose_diag h name gl =
   let env = Tacmach.pf_env gl in
