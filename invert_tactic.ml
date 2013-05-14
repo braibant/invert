@@ -108,31 +108,23 @@ let rec split_tree2diag
     (split_trees: Term.constr list)
     (return_type: Term.types)
     (concl: Term.constr)
+    :Term.constr
     =
-  (* Print.( *)
-  (*   let doc = messages *)
-  (*     ["stl", ST.pp_tl split_trees; *)
-  (*      "return_type", constr return_type; *)
-  (*      "concl", constr concl; *)
-  (*     ] *)
-  (*   in *)
-  (*   let msg = surround 2 2 (string "begin") doc (string "end") in *)
-  (*   eprint msg *)
-  (* ); *)
   match split_trees with
   | [] -> concl
   | head::ll ->
     let (name_argx,ty_argx,return_type) =
-	Term.destProd
-	  (Reductionops.whd_betaiotazeta sigma return_type)
+      Term.destProd
+	(Reductionops.whd_betaiotazeta sigma return_type)
     in
-    (* The first thing to do is to introduce the variable we are
-       working on and do the lift accordingly.
+    (* The first thing to do is to introduce the variable we are working on and do
+       the lift accordingly.
 
        This variable has type [ty_argx] == [I pi ai].  *)
     Term.mkLambda
       (name_argx,ty_argx,
-       (* we lift head, ll and the conclusion to accound for the previous binder *)
+       (* we lift head, ll and the conclusion to accound for the previous
+	  binder *)
        let head = Term.lift 1 head in
        let ll = List.map (Term.lift 1) ll in
        let concl = Term.lift 1 concl in
@@ -153,6 +145,7 @@ let rec split_tree2diag
 	 let return_clause,cc_args =
 	   matched_type2diag env sigma (Term.mkRel 1) (Term.lift 1 ty_argx) return_type
 	 in (*we have the return clause *)
+	 let r = ref None in 
 	 let real_body i cs branch_ty specialized_ctx =
 	   if i + 1 = constructor
 	   then (* recursive call *)
@@ -170,7 +163,7 @@ let rec split_tree2diag
 	 Term.applistc
 	   (mk_casei env sigma ind params (Term.mkRel 1) return_clause real_body)
 	   cc_args
-       | _ -> Errors.error "this is a term"
+       | _ -> assert false
       )
 and matched_type2diag env sigma (tm: Term.constr) ty pre_concl =
   let (ind_family, real_args) =
