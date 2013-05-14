@@ -170,6 +170,7 @@ let rec split_tree2diag
 	 Term.applistc
 	   (mk_casei env sigma ind params (Term.mkRel 1) return_clause real_body)
 	   cc_args
+       | _ -> Errors.error "this is a term"
       )
 and matched_type2diag env sigma (tm: Term.constr) ty pre_concl =
   let (ind_family, real_args) =
@@ -178,11 +179,11 @@ and matched_type2diag env sigma (tm: Term.constr) ty pre_concl =
   let split_trees = real_args @ [ tm ] in
   let generalized_hyps,concl = prepare_conclusion env pre_concl split_trees  in
   Print.(
-    eprint (
-      messages ["hyps", separate_map semi constr generalized_hyps;
-		"concl", constr concl]
+    let doc = messages ["hyps to generalize", separate_map semi (constr' []) generalized_hyps;
+			"concl", constr' [] concl] in
+    eprint (prefix 2 2 (string "matched_type2diag") doc)
     )
-  );
+  ;
   let sort = Termops.new_sort_in_family sort_family in
   let return_type = Inductiveops.make_arity env true ind_family sort in
   let result = split_tree2diag env sigma split_trees return_type concl in
@@ -190,12 +191,6 @@ and matched_type2diag env sigma (tm: Term.constr) ty pre_concl =
   let ctx = Inductiveops.make_arity_signature env true ind_family in
   eta_long env sigma ctx result, generalized_hyps
 and prepare_conclusion env concl stl : Term.constr list * Term.constr =
-  Print.(
-    let doc = messages ["concl", constr concl;
-			"stl", separate_map semi constr stl]
-    in 
-    eprint (prefix 2 2 (string "prepare") doc)
-  );
   (* We have to generalize the elements of the context (either de
      Bruijn or vars) whose type [t] is such that there exists an
      element [e] of the stl such that [e] is a subterm of [t].
@@ -219,19 +214,65 @@ and prepare_conclusion env concl stl : Term.constr list * Term.constr =
     Names.Id.Set.exists (fun n -> Termops.occur_var env n ty) vars
     || Int.Set.exists  (fun i -> Termops.dependent (Term.mkRel i) ty) rels
   in
+  Print.(
+    let doc = messages ["concl", constr concl;
+			"stl", separate_map semi constr stl;
+			"vars", separate_map semi id (Names.Id.Set.elements vars);
+			"rels", separate_map semi int  (Int.Set.elements rels);
+			"env: rel context", rel_context (Environ.rel_context env);
+			(* "env: named context", named_context (Environ.named_context env); *)
+
+		       ]
+    in
+    eprint (prefix 2 2 (string "prepare") doc)
+  );
   let tag n b =
     match n with
     | Names.Name id ->
       Names.Name (Names.Id.of_string (Names.Id.to_string id ^ b))
   in
+  let dependent ty =
+    let res = dependent ty in
+    Print.(
+      let doc = messages ["ty", constr ty;
+			  "result", bool res] in
+      eprint (prefix 2 2 (string "dependent") doc));
+    res
+  in
+  (** - [args] is the list of arguments we are going to regeneralize. They need to
+      be in the context of the original [ctx]
+
+      - [term] is the future conclusion. It needs to be valid in the context of
+      the original [ctx]
+
+      - [n] is the number of elements in [args].
+
+      - [m] is the number of elements we have already seen in the [ctx] so far.
+  *)
+  let rep k x t =
+    let res = Termops.replace_term (Term.mkRel k) x t in 
+    Print.(eprint 
+	     (prefix 2 2 (string "replace") (messages 
+		[
+		  "k", int k;
+		  "t", constr t;
+		  "res", constr res
+		]
+	     ))
+    );
+    res
+  in 
   let rec fold_rel_context args term n m = function
     | [] -> args, term
     | (name, None, ty) :: ctx ->
-      if dependent (Term.lift (n - 1) ty)
+      assert (n <= m);
+      assert (List.length args = n);
+      Print.(eprint (group (int n ^/^ int m ^/^ constr ty)));
+      if dependent (Term.lift (m+1) ty)
       then
-	let args = Term.mkRel m :: args in
-	let term = Termops.replace_term (Term.mkRel (n+1)) (Term.mkRel 1) (Term.lift 1 term) in
-	fold_rel_context args (Term.mkProd (name, Term.lift m ty,term))
+	let args = Term.mkRel (m+1) :: args in
+	let term = rep (n+m + 2) (Term.mkRel 1) (Term.lift 1 term) in
+	fold_rel_context args (Term.mkProd (name, Term.lift (m+1) ty,term))
 	  (succ n)
 	  (succ m)
 	  ctx
@@ -242,14 +283,14 @@ and prepare_conclusion env concl stl : Term.constr list * Term.constr =
     | [] -> args, term
     | (name,body,ty) :: ctx ->
       if
-	dependent ~excluded:name ty
+	dependent (* ~excluded:name *) ty
 	&& not (Names.Id.Set.mem name vars)
       then
 	let term = Termops.replace_term (Term.mkVar name) (Term.mkRel 1) (Term.lift 1 term) in
 	match body with
 	| None ->
 	  fold_named_context (Term.mkVar name :: args)
-	    (Term.mkProd (tag (Names.Name name) "foo", ty,term))
+	    (Term.mkProd (Names.Name name, ty,term))
 	    ctx
 	| Some def ->
 	  fold_named_context  args (Term.mkLetIn (Names.Name name, ty, def, term))
@@ -259,7 +300,7 @@ and prepare_conclusion env concl stl : Term.constr list * Term.constr =
   in
   match Environ.rel_context env with
   | [] -> fold_named_context [] concl  (Environ.named_context env)
-  | _::ctx -> fold_rel_context   []   concl 2 2  ctx
+  | _::ctx -> fold_rel_context   []   concl 0 1  ctx
 
 (** Debug version, that only try to construct the diag *)
 let pose_diag h name gl =

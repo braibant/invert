@@ -12,6 +12,6 @@ Proof.
 Qed. 
 
 Lemma test3 (H : Some nat = Some bool) : True.  
-Fail invert H. 
+  Fail invert H. 
 Abort. 
 
