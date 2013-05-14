@@ -206,11 +206,7 @@ and prepare_conclusion env concl stl : Term.constr list * Term.constr =
   let vars = List.fold_right (fun t -> Names.Id.Set.union (Termops.collect_vars t)) stl Names.Id.Set.empty in
   let rels = List.fold_right (fun t -> Int.Set.union (Termops.free_rels t)) stl Int.Set.empty in
   let rels = Int.Set.remove 1 rels in
-  let dependent ?excluded ty =
-    let vars = match excluded with
-      | None -> vars
-      | Some v -> (Names.Id.Set.remove v vars)
-    in
+  let dependent ty =
     Names.Id.Set.exists (fun n -> Termops.occur_var env n ty) vars
     || Int.Set.exists  (fun i -> Termops.dependent (Term.mkRel i) ty) rels
   in
@@ -226,19 +222,6 @@ and prepare_conclusion env concl stl : Term.constr list * Term.constr =
     in
     eprint (prefix 2 2 (string "prepare") doc)
   );
-  let tag n b =
-    match n with
-    | Names.Name id ->
-      Names.Name (Names.Id.of_string (Names.Id.to_string id ^ b))
-  in
-  let dependent ty =
-    let res = dependent ty in
-    Print.(
-      let doc = messages ["ty", constr ty;
-			  "result", bool res] in
-      eprint (prefix 2 2 (string "dependent") doc));
-    res
-  in
   (** - [args] is the list of arguments we are going to regeneralize. They need to
       be in the context of the original [ctx]
 
@@ -249,29 +232,19 @@ and prepare_conclusion env concl stl : Term.constr list * Term.constr =
 
       - [m] is the number of elements we have already seen in the [ctx] so far.
   *)
-  let rep k x t =
-    let res = Termops.replace_term (Term.mkRel k) x t in 
-    Print.(eprint 
-	     (prefix 2 2 (string "replace") (messages 
-		[
-		  "k", int k;
-		  "t", constr t;
-		  "res", constr res
-		]
-	     ))
-    );
-    res
-  in 
   let rec fold_rel_context args term n m = function
     | [] -> args, term
     | (name, None, ty) :: ctx ->
       assert (n <= m);
       assert (List.length args = n);
-      Print.(eprint (group (int n ^/^ int m ^/^ constr ty)));
+      (* We have to lift by [m+1] to be back in the original context, since [ty]
+	 is the [m+1] the element in the context. Then, we have to replace the  *)
       if dependent (Term.lift (m+1) ty)
       then
 	let args = Term.mkRel (m+1) :: args in
-	let term = rep (n+m + 2) (Term.mkRel 1) (Term.lift 1 term) in
+	(* We have to replace the [n+1 + m+1]th index, by the index [1] to make a
+	   proper capture.  *)
+	let term = Termops.replace_term  (Term.mkRel (n+m + 2)) (Term.mkRel 1) (Term.lift 1 term) in
 	fold_rel_context args (Term.mkProd (name, Term.lift (m+1) ty,term))
 	  (succ n)
 	  (succ m)
@@ -283,7 +256,7 @@ and prepare_conclusion env concl stl : Term.constr list * Term.constr =
     | [] -> args, term
     | (name,body,ty) :: ctx ->
       if
-	dependent (* ~excluded:name *) ty
+	dependent ty
 	&& not (Names.Id.Set.mem name vars)
       then
 	let term = Termops.replace_term (Term.mkVar name) (Term.mkRel 1) (Term.lift 1 term) in
@@ -298,6 +271,9 @@ and prepare_conclusion env concl stl : Term.constr list * Term.constr =
       else
 	fold_named_context args term ctx
   in
+  (* According to Pierre, we have to fold the named-context, only the first time
+     in the recursive traversal, since later, we will have captured again all the
+     variables in the rel-context. *)
   match Environ.rel_context env with
   | [] -> fold_named_context [] concl  (Environ.named_context env)
   | _::ctx -> fold_rel_context   []   concl 0 1  ctx
