@@ -309,7 +309,7 @@ and prepare_conclusion env concl stl : ST.name list * Term.constr =
     | [] -> args, term
     | ((name, None, ty) as decl)::q ->
       let vars' = ST.pop_vars vars in
-      if occurs_check ty vars'  && not (List.mem (ST.Rel 1) vars')
+      if occurs_check ty vars'
       then
   	let args' = ST.Rel pos :: args in
 	let term' = Term.lift 1 term in
