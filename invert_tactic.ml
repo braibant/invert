@@ -94,6 +94,14 @@ let mk_case_tac ind_family term return_clause subtac k = fun gl ->
   build 0 [] [] gl
 
 
+let eta_long env sigma ctx term =
+  let term = Term.lift (Term.rel_context_length ctx) term in
+  let term =
+    Termops.it_mkLambda_or_LetIn
+      (Reductionops.whd_beta sigma
+	 (Term.mkApp (term,Termops.extended_rel_vect 0 ctx))) ctx
+  in
+  term
 
 let rec split_tree2diag
     env sigma
@@ -113,7 +121,7 @@ let rec split_tree2diag
   (* ); *)
   match split_trees with
   | [] -> concl
-  | head::ll ->        
+  | head::ll ->
     let (name_argx,ty_argx,return_type) =
 	Term.destProd
 	  (Reductionops.whd_betaiotazeta sigma return_type)
@@ -125,31 +133,31 @@ let rec split_tree2diag
     Term.mkLambda
       (name_argx,ty_argx,
        (* we lift head, ll and the conclusion to accound for the previous binder *)
-       let head = Term.lift 1 head in 
-       let ll = List.map (Term.lift 1) ll in 
+       let head = Term.lift 1 head in
+       let ll = List.map (Term.lift 1) ll in
        let concl = Term.lift 1 concl in
 
        (* we update the environment to account for the binder *)
        let env = Environ.push_rel (name_argx,None,ty_argx) env in
-       
+
        (* we can now reduce the head *)
        let (hd,tl) = Reductionops.whd_betadeltaiota_stack env sigma head in
        match Term.kind_of_term hd with
-       | Term.Var _  | Term.Rel _ when CList.is_empty tl -> 
+       | Term.Var _  | Term.Rel _ when CList.is_empty tl ->
 	 split_tree2diag env sigma
 	   (List.map (Termops.replace_term hd (Term.mkRel 1)) ll)
 	   return_type
 	   (Termops.replace_term hd (Term.mkRel 1) concl)
        | Term.Construct (ind, constructor) ->
 	 let params,split_trees = CList.chop (Inductiveops.inductive_nparams ind) tl in
-	 let return_clause,args =
+	 let return_clause,cc_args =
 	   matched_type2diag env sigma (Term.mkRel 1) (Term.lift 1 ty_argx) return_type
 	 in (*we have the return clause *)
 	 let real_body i cs branch_ty specialized_ctx =
 	   if i + 1 = constructor
 	   then (* recursive call *)
 	     split_tree2diag env sigma
-	       (split_trees@args@ll)
+	       (split_trees@cc_args@ll)
 	       (Termops.it_mkProd_or_LetIn branch_ty cs.Inductiveops.cs_args)
 	       concl
 	   else
@@ -158,10 +166,10 @@ let rec split_tree2diag
 	     Term.it_mkLambda_or_LetIn
 	       devil
 	       (List.append specialized_ctx cs.Inductiveops.cs_args)
- 	 in
+	 in
 	 Term.applistc
 	   (mk_casei env sigma ind params (Term.mkRel 1) return_clause real_body)
-	   args
+	   cc_args
       )
 and matched_type2diag env sigma (tm: Term.constr) ty pre_concl =
   let (ind_family, real_args) =
@@ -180,85 +188,64 @@ and matched_type2diag env sigma (tm: Term.constr) ty pre_concl =
   let result = split_tree2diag env sigma split_trees return_type concl in
   (* put the result in eta long form *)
   let ctx = Inductiveops.make_arity_signature env true ind_family in
-  let lifted_result = Term.lift (Term.rel_context_length ctx) result in
-  let result' =
-    Termops.it_mkLambda_or_LetIn
-      (Reductionops.whd_beta sigma
-	 (Term.mkApp (lifted_result,Termops.extended_rel_vect 0 ctx))) ctx in
-  result', generalized_hyps
+  eta_long env sigma ctx result, generalized_hyps
 and prepare_conclusion env concl stl : Term.constr list * Term.constr =
   (* We have to generalize the elements of the context (either de
      Bruijn or vars) whose type [t] is such that there exists an
      element [e] of the stl such that [e] is a subterm of [t].
-     
+
      Note that we cannot consider the [stl] as a pure list of term,
      since, e.g., [S m] would be considered as a whole, while we would
-     like to consider  [m]. 
-     
+     like to consider  [m].
+
      Therefore, we fold on the context, and introduces these
      generalizations. *)
-  let rec popl = function 
-    | [] -> []
-    | hd :: q -> match Term.kind_of_term hd with 
-      | Term.Var x -> hd :: popl q
-      | Term.Rel i -> if i > 1 then Term.mkRel (i - 1) :: popl q
-	else popl q
-      | _ -> popl q
+
+  (* collect the set of variables (in a broad sense) that occurs in the stl *)
+  let vars = List.fold_right (fun t -> Names.Id.Set.union (Termops.collect_vars t)) stl Names.Id.Set.empty in
+  let rels = List.fold_right (fun t -> Int.Set.union (Termops.free_rels t)) stl Int.Set.empty in
+  let rels = Int.Set.remove 1 rels in 
+  let dependent ty  =
+    Names.Id.Set.exists (fun n -> Termops.occur_var env n ty) vars
+    || Int.Set.exists  (fun i -> Termops.dependent (Term.mkRel i) ty) rels
   in
-  
-  let rec fold_rel_context args term n stl = function 
+
+  let rec fold_rel_context args term n m = function
     | [] -> args, term
-    | (name, None, ty) :: ctx -> 
-      if 
-	List.exists (fun t -> Termops.dependent t ty) stl 
-	&& not (List.mem (Term.mkRel 1) stl)
+    | (name, None, ty) :: ctx ->
+      if dependent (Term.lift (n - 1) ty)
       then
-	let args = Term.mkRel n :: args in 
-	let term = Termops.replace_term (Term.mkRel n) (Term.mkRel 1) (Term.lift 1 term) in 
-	fold_rel_context args (Term.mkProd (name, ty,term))  
-	  (succ n) 
-	  (popl stl)
-	  ctx
+	let args = Term.mkRel m :: args in
+	let term = Termops.replace_term (Term.mkRel (n+1)) (Term.mkRel 1) (Term.lift 1 term) in
+	fold_rel_context args (Term.mkProd (name, Term.lift m ty,term))
+	  (succ n)
+	  (succ m)
+ 	  ctx
       else
-	fold_rel_context args term (succ n) (popl stl) ctx 
-  in 
-  let rec fold_named_context args term stl = function 
+	fold_rel_context args term n (succ m) ctx
+  in
+  let rec fold_named_context args term = function
     | [] -> args, term
-    | (name,body,ty) :: ctx ->      
-      if 
-	(List.exists (fun t -> Termops.dependent t ty) stl )	
+    | (name,body,ty) :: ctx ->
+      if
+	dependent ty
 	&& not (List.mem (Term.mkVar name) stl)
-      then 	
-	let term = Termops.replace_term (Term.mkVar name) (Term.mkRel 1) (Term.lift 1 term) in 
-	match body with 
-	| None -> 
-	  fold_named_context (Term.mkVar name :: args) (Term.mkProd (Names.Name name, ty,term))  
-	    (popl stl)
+      then
+	let term = Termops.replace_term (Term.mkVar name) (Term.mkRel 1) (Term.lift 1 term) in
+	match body with
+	| None ->
+	  fold_named_context (Term.mkVar name :: args) (Term.mkProd (Names.Name name, ty,term))
 	    ctx
-	| Some def -> 
+	| Some def ->
 	  fold_named_context  args (Term.mkLetIn (Names.Name name, ty, def, term))
-	    (popl stl)
 	    ctx
-      else 
-	fold_named_context args term stl ctx
-  in 
-  let args, term = fold_rel_context   []   concl 1 stl (Environ.rel_context env) in 
-  let args', term' = fold_named_context args term    stl (Environ.named_context env) in 
-  Print.(
-    let doc = 
-      messages 
-	["concl",constr concl; 
-	 "stl", separate_map semi constr stl;
-	 "args", separate_map semi constr args;
-	 "term", constr term;
-	 "args'", separate_map semi constr args';
-	 "term'", constr term';
-	]
-    in 
-    eprint (prefix 2 2 (string "prepare") doc)
-  );
-  args, term 
-  
+      else
+	fold_named_context args term ctx
+  in
+  match Environ.rel_context env with
+  | [] -> fold_named_context [] concl  (Environ.named_context env)
+  | _::ctx -> fold_rel_context   []   concl 2 2  ctx
+    
 (** Debug version, that only try to construct the diag *)
 let pose_diag h name gl =
   let env = Tacmach.pf_env gl in
@@ -309,35 +296,35 @@ module ST = struct
   | Var of Names.Id.t
   | Rel of int
 
-  let name_to_constr = function 
+  let name_to_constr = function
     | Var v -> Term.mkVar v
-    | Rel i -> Term.mkRel i 
+    | Rel i -> Term.mkRel i
 
   let lift_name n = function
     | Var name -> Var name
     | Rel i -> Rel (i + n)
 
-      
+
   let eq_name = (=)
-      
+
   type t =
-  | Constructor of 
+  | Constructor of
       (Names.inductive * int (* constructor number *) *
 	 Term.constr list (* params *) * t list)
-  | Leaf of name 
+  | Leaf of name
 
   let var v = Leaf (Var v)
   let rel i = Leaf (Rel i)
 
-  let replace_term d e term = match d with 
+  let replace_term d e term = match d with
     | Var name -> Term.replace_vars [name,e] term
-    | Rel i    -> Termops.replace_term (Term.mkRel i) e term 
+    | Rel i    -> Termops.replace_term (Term.mkRel i) e term
 
-    
+
   let make env sigma (args: Term.constr list) : t list =
     (* Print.(eprint  *)
-    (* 	     (prefix 2 2 (string "args") *)
-    (* 	     (separate_map semi constr args))); *)
+    (*	     (prefix 2 2 (string "args") *)
+    (*	     (separate_map semi constr args))); *)
     let rec aux arg : t  =
       let (hd,tl) = Reductionops.whd_betadeltaiota_stack env sigma arg in
       match Term.kind_of_term hd with
@@ -352,41 +339,41 @@ module ST = struct
 	invalid_arg "todo"
     in
     List.map aux args
-      
-  let rec replace (d:name) (e:name) = function 
-    | Leaf v -> 
+
+  let rec replace (d:name) (e:name) = function
+    | Leaf v ->
       Leaf (if eq_name v d then e else v)
-    | Constructor (ind, constructor, params,stl) -> 
+    | Constructor (ind, constructor, params,stl) ->
       Constructor (ind, constructor, params, List.map (replace d e) stl)
 
-  let rec lift i = function 
+  let rec lift i = function
     | Leaf v -> Leaf (lift_name i v)
-    | Constructor (ind, constructor, params,stl) -> 
+    | Constructor (ind, constructor, params,stl) ->
       Constructor (ind, constructor, params, List.map (lift i) stl)
 
   let liftl i l = List.map (lift i) l
 
-  let rec vars = function 
+  let rec vars = function
     | Leaf v -> [v]
-    | Constructor (ind, constructor, params, stl) -> varsl stl 
+    | Constructor (ind, constructor, params, stl) -> varsl stl
   and varsl stl = List.flatten (List.map vars stl)
 
   (* decrement all rel variables by one *)
-  let rec pop_vars = function 
+  let rec pop_vars = function
     | [] -> []
     | Var name::q -> Var name :: pop_vars q
-    | Rel i :: q -> if i > 1 then Rel (i - 1) :: pop_vars q else  pop_vars q	    
-    
+    | Rel i :: q -> if i > 1 then Rel (i - 1) :: pop_vars q else  pop_vars q
+
   let pp_name = let open Print in
 		function
 		| Rel i -> string "@" ^^ int i
 		| Var v -> id v
-		  
+
   let pp_t t =
   let open Print in
-  let rec aux t =    
+  let rec aux t =
     match t with
-    | Leaf n -> pp_name n 
+    | Leaf n -> pp_name n
     | Constructor (ind, constructor, params, split_trees) ->
       group
 	(constr (Term.mkConstruct (ind, constructor))
@@ -396,7 +383,7 @@ module ST = struct
 	   brackets (separate_map comma aux split_trees)
 	)
   in aux t
-	
+
   let pp_tl (st: t list) =
     let open Print in
     surround_separate_map 2 1
@@ -406,5 +393,5 @@ module ST = struct
       rbracket
       pp_t
       st
-            
+
 end
