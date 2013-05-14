@@ -17,14 +17,14 @@ let mk_fun
     (name:Names.identifier)
     (t: Term.constr)
     (k : Names.identifier -> Term.constr) =
-  Term.mkNamedLambda name t (Term.subst_vars [name] (k name))
+  Term.mkNamedLambda name t (Vars.subst_vars [name] (k name))
 
 let mk_let
     (name:Names.identifier)
     (c: Term.constr)
     (t: Term.constr)
     (k : Names.identifier -> Term.constr) =
-  Term.mkNamedLetIn name c t (Term.subst_vars [name] (k name))
+  Term.mkNamedLetIn name c t (Vars.subst_vars [name] (k name))
 
 let nowhere =
   { Locus.onhyps = Some [];
