@@ -165,25 +165,103 @@ let rec split_tree2diag
 	   cc_args
        | _ -> assert false
       )
-and matched_type2diag env sigma (tm: Term.constr) ty pre_concl =
-  let (ind_family, real_args) =
-    Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma ty) in
-  let (_,sort_family) = Inductiveops.get_arity env ind_family in
-  let split_trees = real_args @ [ tm ] in
-  let generalized_hyps,concl = prepare_conclusion env pre_concl split_trees  in
-  Print.(
-    let doc = messages ["hyps to generalize", separate_map semi (constr' []) generalized_hyps;
-			"concl", constr' [] concl] in
-    eprint (prefix 2 2 (string "matched_type2diag") doc)
-    )
-  ;
-  let sort = Termops.new_sort_in_family sort_family in
-  let return_type = Inductiveops.make_arity env true ind_family sort in
-  let result = split_tree2diag env sigma split_trees return_type concl in
+(* Assuming [ty = I args], we have to generalize the args that are not
+   patterns. Let {t_i : ty_i} be the set of terms we have to generalize. 
+   
+   (Λ (x_i : ty_i) (H_i: t_i = x_i). [[I args / t_i <- x_i]]) t_i (eq_refl t_i)
+
+*)
+and abstract_generalize env sigma (tm: Term.constr) ty concl = 
+  let terms_to_generalize = 
+    let (_, real_args) = Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma ty) in
+    let rec aux acc arg = 
+      let (hd,tl) = Reductionops.whd_betadeltaiota_stack env sigma arg in
+      match Term.kind_of_term hd with
+      | Term.Rel _ | Term.Var _ -> acc
+      | Term.Construct (ind, constructor) ->
+	let _,real_args = CList.chop (Inductiveops.inductive_nparams ind) tl in
+	List.fold_left aux acc real_args
+      | _ -> arg :: acc
+    in 
+    List.rev (List.fold_left aux [] real_args) 
+  in 
+  (* We would like build a term [c] as a place holder for each of
+     these terms_to_generalize. In the case [I (S (n+m)) (@FS (n+m)
+     (fn @ fm))], c is [fun x y z => I (S x) (@FS y
+     z)]. Unfortunately, this term is ill-typed, so we build it on the
+     fly. *)
+
+  let rec aux env sigma t app = function 
+    | [] -> ..
+    | arg :: args -> 
+      match Term.kind_of_term arg with 
+      (* In this case, it means that we had a term that has already
+	 been generalized by aux.  *)
+      | Term.Rel _       | Term.Var _  -> aux env sigma args t
+      | _ -> 
+	(* We have to introduce a fresh variable of type [type_of arg] in
+	   the context. *)
+	let ty = Typing.type_of env sigma arg in 
+	let ctx = (Names.Anonymous, None, ty) :: ctx in 
+	(* we replace [arg] by [Rel 1] in [t], and in the remaining
+	   [args]. This is tricky business because we may be too eager
+	   to replace similar looking terms here...  *)
+	let f t = Termops.replace_term (Term.lift 1 arg) (Term.mkRel 1) (Term.lift 1 t) in 
+	let t = f t in 
+	let args = List.map f args in 
+	let app = arg :: app in 
+	  (* Arg,  *)
+	  
+    (* Here, we differ from "abstract_generalize", because we have to
+       replace all occurences of the same term with the same variable.  *)
+    (* let name = get_id name in *)
+    (* let decl = (Name name, None, ty) in *)
+    (* let ctx = decl :: ctx in *)
+    (* let c' = mkApp (lift 1 c, [|mkRel 1|]) in *)
+    (* let args = arg :: args in *)
+    (* let liftarg = lift (List.length ctx) arg in *)
+    (* let eq, refl = *)
+    (*   if leq then *)
+    (*     mkEq (lift 1 ty) (mkRel 1) liftarg, mkRefl (lift (-lenctx) ty) arg *)
+    (*   else *)
+    (*     mkHEq (lift 1 ty) (mkRel 1) liftargty liftarg, mkHRefl argty arg *)
+    (* in *)
+    (* let eqs = eq :: lift_list eqs in *)
+    (* let refls = refl :: refls in *)
+    (* let argvars = ids_of_constr vars arg in *)
+    (* (arity, ctx, push_rel decl ctxenv, c', args, eqs, refls,  *)
+    (*  nongenvars, Names.Id.Set.union argvars vars, env) *)
+
+	  Print.(
+	    eprint (
+	      messages 
+		[
+		  "terms", separate_map semi constr terms_to_generalize;
+		  "ty", constr ty
+		]
+	    )
+	  );
+	  ()  
+	and matched_type2diag env sigma (tm: Term.constr) ty pre_concl =
+	  abstract_generalize env sigma tm ty pre_concl;
+	  let (ind_family, real_args) =
+	    Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma ty) in
+	  let (_,sort_family) = Inductiveops.get_arity env ind_family in
+	  let split_trees = real_args @ [ tm ] in
+	  let generalized_hyps,concl = prepare_conclusion env pre_concl split_trees  in
+	  Print.(
+	    let doc = messages ["hyps to generalize", separate_map semi (constr' []) generalized_hyps;
+				"concl", constr' [] concl] in
+	    eprint (prefix 2 2 (string "matched_type2diag") doc)
+	  )
+	  ;
+	  let sort = Termops.new_sort_in_family sort_family in
+	  let return_type = Inductiveops.make_arity env true ind_family sort in
+	  let result = split_tree2diag env sigma split_trees return_type concl in
   (* put the result in eta long form *)
-  let ctx = Inductiveops.make_arity_signature env true ind_family in
-  eta_long env sigma ctx result, generalized_hyps
-and prepare_conclusion env concl stl : Term.constr list * Term.constr =
+	  let ctx = Inductiveops.make_arity_signature env true ind_family in
+	  eta_long env sigma ctx result, generalized_hyps
+	and prepare_conclusion env concl stl : Term.constr list * Term.constr =
   (* We have to generalize the elements of the context (either de
      Bruijn or vars) whose type [t] is such that there exists an
      element [e] of the stl such that [e] is a subterm of [t].
@@ -196,25 +274,25 @@ and prepare_conclusion env concl stl : Term.constr list * Term.constr =
      generalizations. *)
 
   (* collect the set of variables (in a broad sense) that occurs in the stl *)
-  let vars = List.fold_right (fun t -> Names.Id.Set.union (Termops.collect_vars t)) stl Names.Id.Set.empty in
-  let rels = List.fold_right (fun t -> Int.Set.union (Termops.free_rels t)) stl Int.Set.empty in
-  let rels = Int.Set.remove 1 rels in
-  let dependent ty =
-    Names.Id.Set.exists (fun n -> Termops.occur_var env n ty) vars
-    || Int.Set.exists  (fun i -> Termops.dependent (Term.mkRel i) ty) rels
-  in
-  Print.(
-    let doc = messages ["concl", constr concl;
-			"stl", separate_map semi constr stl;
-			"vars", separate_map semi id (Names.Id.Set.elements vars);
-			"rels", separate_map semi int  (Int.Set.elements rels);
-			"env: rel context", rel_context (Environ.rel_context env);
-			(* "env: named context", named_context (Environ.named_context env); *)
+	  let vars = List.fold_right (fun t -> Names.Id.Set.union (Termops.collect_vars t)) stl Names.Id.Set.empty in
+	  let rels = List.fold_right (fun t -> Int.Set.union (Termops.free_rels t)) stl Int.Set.empty in
+	  let rels = Int.Set.remove 1 rels in
+	  let dependent ty =
+	    Names.Id.Set.exists (fun n -> Termops.occur_var env n ty) vars
+	    || Int.Set.exists  (fun i -> Termops.dependent (Term.mkRel i) ty) rels
+	  in
+	  Print.(
+	    let doc = messages ["concl", constr concl;
+				"stl", separate_map semi constr stl;
+				"vars", separate_map semi id (Names.Id.Set.elements vars);
+				"rels", separate_map semi int  (Int.Set.elements rels);
+				"env: rel context", rel_context (Environ.rel_context env);
+		       (* "env: named context", named_context (Environ.named_context env); *)
 
-		       ]
-    in
-    eprint (prefix 2 2 (string "prepare") doc)
-  );
+			       ]
+	    in
+	    eprint (prefix 2 2 (string "prepare") doc)
+	  );
   (** - [args] is the list of arguments we are going to regeneralize. They need to
       be in the context of the original [ctx]
 
@@ -225,51 +303,51 @@ and prepare_conclusion env concl stl : Term.constr list * Term.constr =
 
       - [m] is the number of elements we have already seen in the [ctx] so far.
   *)
-  let rec fold_rel_context args term n m = function
-    | [] -> args, term
-    | (name, None, ty) :: ctx ->
-      assert (n <= m);
-      assert (List.length args = n);
+	  let rec fold_rel_context args term n m = function
+	    | [] -> args, term
+	    | (name, None, ty) :: ctx ->
+	      assert (n <= m);
+	      assert (List.length args = n);
       (* We have to lift by [m+1] to be back in the original context, since [ty]
 	 is the [m+1] the element in the context. Then, we have to replace the  *)
-      if dependent (Term.lift (m+1) ty)
-      then
-	let args = Term.mkRel (m+1) :: args in
+	      if dependent (Term.lift (m+1) ty)
+	      then
+		let args = Term.mkRel (m+1) :: args in
 	(* We have to replace the [n+1 + m+1]th index, by the index [1] to make a
 	   proper capture.  *)
-	let term = Termops.replace_term  (Term.mkRel (n+m + 2)) (Term.mkRel 1) (Term.lift 1 term) in
-	fold_rel_context args (Term.mkProd (name, Term.lift (m+1) ty,term))
-	  (succ n)
-	  (succ m)
-	  ctx
-      else
-	fold_rel_context args term n (succ m) ctx
-  in
-  let rec fold_named_context args term = function
-    | [] -> args, term
-    | (name,body,ty) :: ctx ->
-      if
-	dependent ty
-	&& not (Names.Id.Set.mem name vars)
-      then
-	let term = Termops.replace_term (Term.mkVar name) (Term.mkRel 1) (Term.lift 1 term) in
-	match body with
-	| None ->
-	  fold_named_context (Term.mkVar name :: args)
-	    (Term.mkProd (Names.Name name, ty,term))
-	    ctx
-	| Some def ->
-	  fold_named_context  args (Term.mkLetIn (Names.Name name, ty, def, term))
-	    ctx
-      else
-	fold_named_context args term ctx
-  in
+		let term = Termops.replace_term  (Term.mkRel (n+m + 2)) (Term.mkRel 1) (Term.lift 1 term) in
+		fold_rel_context args (Term.mkProd (name, Term.lift (m+1) ty,term))
+		  (succ n)
+		  (succ m)
+		  ctx
+	      else
+		fold_rel_context args term n (succ m) ctx
+	  in
+	  let rec fold_named_context args term = function
+	    | [] -> args, term
+	    | (name,body,ty) :: ctx ->
+	      if
+		dependent ty
+		&& not (Names.Id.Set.mem name vars)
+	      then
+		let term = Termops.replace_term (Term.mkVar name) (Term.mkRel 1) (Term.lift 1 term) in
+		match body with
+		| None ->
+		  fold_named_context (Term.mkVar name :: args)
+		    (Term.mkProd (Names.Name name, ty,term))
+		    ctx
+		| Some def ->
+		  fold_named_context  args (Term.mkLetIn (Names.Name name, ty, def, term))
+		    ctx
+	      else
+		fold_named_context args term ctx
+	  in
   (* According to Pierre, we have to fold the named-context, only the first time
      in the recursive traversal, since later, we will have captured again all the
      variables in the rel-context. *)
-  match Environ.rel_context env with
-  | [] -> fold_named_context [] concl  (Environ.named_context env)
-  | _::ctx -> fold_rel_context   []   concl 0 1  ctx
+	  match Environ.rel_context env with
+	  | [] -> fold_named_context [] concl  (Environ.named_context env)
+	  | _::ctx -> fold_rel_context   []   concl 0 1  ctx
 
 (** Debug version, that only try to construct the diag *)
 let pose_diag h name gl =
