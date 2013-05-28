@@ -203,21 +203,21 @@ let rec split_tree2diag
     (return_type: Constr.types)
     (concl: Constr.t)
     =
-  (* Print.( *)
-  (*   let doc = messages *)
-  (*     ["stl", ST.pp_tl split_trees; *)
-  (*      "return_type", constr return_type; *)
-  (*      "concl", constr concl; *)
-  (*     ] *)
-  (*   in *)
-  (*   let msg = surround 2 2 (string "begin") doc (string "end") in *)
-  (*   eprint msg *)
-  (* ); *)
+  Print.(
+    let doc = messages
+      ["stl", ST.pp_tl split_trees;
+       "return_type", constr return_type;
+       "concl", constr concl;
+      ]
+    in
+    let msg = surround 2 2 (string "begin") doc (string "end") in
+    eprint msg
+  );
   let split_trees = ST.liftl 1 split_trees in
   match split_trees with
   | [] -> concl
   | head::ll ->
-    let (name_argx,ty_argx,return_type) =
+    let (name_argx,ty_argx,remaining_return_type) =
 	Term.destProd
 	  (Reductionops.whd_betaiotazeta sigma return_type)
     in
@@ -232,10 +232,16 @@ let rec split_tree2diag
 
        match head with
        | ST.Leaf v ->
+        let abstracted_concl =
+          Unification.abstract_list_all_with_dependencies
+            env sigma return_type concl [ST.name_to_constr v] in
+        let substituted_concl =
+          Reductionops.whd_beta sigma
+            (Constr.mkApp (abstracted_concl,[|Constr.mkRel 1|])) in
 	 split_tree2diag env sigma
 	   (List.map (ST.replace v (ST.Rel 1)) ll)
-	   return_type
-	   (ST.replace_term  v (Constr.mkRel 1) concl)
+	   remaining_return_type
+           substituted_concl
        | ST.Constructor (ind, constructor, params, split_trees) ->
 	 (* we want to refine in the [constructor] constructor case. *)
 	 (* We need to build the return clause and the branches.
@@ -254,8 +260,8 @@ let rec split_tree2diag
 	    on and the conclusion we want is [forall stt -> Type] *)
 
 	 let return_clause,args =
-	   matched_type2diag env sigma (Constr.mkRel 1) (Vars.lift 1 ty_argx) return_type
-	 in (*we have the return clause *)
+	   matched_type2diag env sigma (Constr.mkRel 1) (Vars.lift 1 ty_argx)
+	     remaining_return_type in (*we have the return clause *)
 	 let real_body i cs branch_ty specialized_ctx =
 	   if i + 1 = constructor
 	   then (* recursive call *)
