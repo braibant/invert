@@ -1,5 +1,5 @@
 Declare ML Module "invert".
-Require Import String.
+
 Inductive even : nat -> Type :=
   | even_0 : even 0
   | even_SS : forall n, even n -> even (S (S n)).
