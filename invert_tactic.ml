@@ -118,10 +118,6 @@ module ST = struct
   let var v = Leaf (Var v)
   let rel i = Leaf (Rel i)
 
-  let replace_term d e term = match d with
-    | Var name -> Vars.replace_vars [name,e] term
-    | Rel i    -> Termops.replace_term (Constr.mkRel i) e term
-
   let make env sigma (args: Constr.t list) : t list =
     (* Print.(eprint  *)
     (* 	     (prefix 2 2 (string "args") *)
@@ -140,12 +136,6 @@ module ST = struct
 	invalid_arg "todo"
     in
     List.map aux args
-
-  let rec replace (d:name) (e:name) = function
-    | Leaf v ->
-      Leaf (if eq_name v d then e else v)
-    | Constructor (ind, constructor, params,stl) ->
-      Constructor (ind, constructor, params, List.map (replace d e) stl)
 
   let rec lift i = function
     | Leaf v -> Leaf (lift_name i v)
@@ -197,15 +187,97 @@ module ST = struct
 
 end
 
+module Subst = struct
+  type t = Names.Id.t list * int list * Context.rel_context
+(** var to abstract * rels to substitute the var with * rel_context of the var list
+
+The 3 list have the same length ... *)
+
+  let empty = ([],[],[])
+
+  let pp (vars,rels,ctx) =
+  Print.(
+    let doc = messages
+      [
+       "ctx", (rel_context ctx);
+       "vars", (surround_separate_map 2 1 (break 0) (lbrace) comma (rbrace) constr vars);
+       "rels", (surround_separate_map 2 1 (break 0) (lbrace) comma (rbrace) int rels);
+      ]
+    in
+    surround 2 2 (string "begin subst") doc (string "end")
+  )
+
+  (** [subst_in_type_when_possible env sigma ctx vars args t] substitutes
+      [vars] by [args] in [t]. Rel context created by the [vars] is [ctx].
+  *)
+  let subst_in_type_when_possible env sigma ctx vars args t =
+  Print.(
+    let doc = messages
+      ["t", constr t;
+       "ctx", (rel_context ctx);
+       "vars", (surround_separate_map 2 1 (break 0) (lbrace) comma (rbrace) constr vars);
+       "args", (surround_separate_map 2 1 (break 0) (lbrace) comma (rbrace) constr (Array.to_list args));
+      ]
+    in
+    let msg = surround 2 2 (string "begin") doc (string "end") in
+    eprint msg
+  );
+
+    if CList.is_empty vars then t else
+    let abstracted_ty = Term.mkArity (ctx,Termops.new_Type_sort ()) in
+    let abstracted =
+      Unification.abstract_list_all_with_dependencies
+	env sigma abstracted_ty t vars in
+    Reductionops.whd_beta sigma (Constr.mkApp (abstracted,args))
+
+  let traverse_to_add env sigma term lazy_decl to_translate (vars,rels,ctx) =
+      let rec aux a b = match a, b with
+	| hv :: tv, _ :: tr when Constr.equal term hv -> a, 1 :: tr, ctx
+	| hv :: tv, hr :: tr ->
+	  let tv',tr',ctx' = aux tv tr in
+	  (hv::tv',(to_translate hr)::tr',ctx')
+	| [], [] ->
+	  let (name,_,ty) = lazy_decl () in
+	  let new_ty =
+	    subst_in_type_when_possible env sigma ctx vars
+	      (Termops.extended_rel_vect 0 ctx) ty in
+	  ([term], [1], Context.add_rel_decl (name, None, new_ty) ctx)
+	| _, _ ->
+	  Errors.anomaly ~label:"Invert_tactic.Subst.traverse_to_add"
+	    (Pp.str "Broken substitution")
+      in aux vars rels
+
+  let add env sigma subst = function
+    | ST.Rel i ->
+      let i_t = Constr.mkRel i in
+      let lazy_decl () =
+	let x, y, z = Environ.lookup_rel i env in x, y, Vars.lift i z in
+      traverse_to_add env sigma i_t lazy_decl
+	(fun x -> if Int.equal x i then 1 else x) subst
+    | ST.Var v ->
+      let v_t = Constr.mkVar v in
+      let lazy_decl () = (Names.Name v, None, Environ.named_type v env) in
+      traverse_to_add env sigma v_t lazy_decl (fun x -> x) subst
+
+  let lift k (vars,rels,ctx) =
+    (CList.map (Vars.lift k) vars,CList.map ((+) k) rels,ctx)
+
+  let subst_in_type env sigma (vars,rels,ctx) t =
+    subst_in_type_when_possible env sigma ctx vars
+      (CArray.map Constr.mkRel (CArray.of_list rels)) t
+
+end
+
 let rec split_tree2diag
-    env sigma
+    env sigma subst
     (split_trees: ST.t list)
     (return_type: Constr.types)
     (concl: Constr.t)
     =
   Print.(
     let doc = messages
-      ["stl", ST.pp_tl split_trees;
+      ["subst", Subst.pp subst;
+	"stl", ST.pp_tl split_trees;
        "return_type", constr return_type;
        "concl", constr concl;
       ]
@@ -213,35 +285,30 @@ let rec split_tree2diag
     let msg = surround 2 2 (string "begin") doc (string "end") in
     eprint msg
   );
+
   let split_trees = ST.liftl 1 split_trees in
   match split_trees with
-  | [] -> concl
+  | [] -> Subst.subst_in_type env sigma subst concl
   | head::ll ->
-    let (name_argx,ty_argx,remaining_return_type) =
+    let (name_argx,ty_argx,return_type) =
 	Term.destProd
 	  (Reductionops.whd_betaiotazeta sigma return_type)
     in
+
     (* The first thing to do is to introduce the variable we are
        working on and do the lift accordingly.
 
        This variable has type [ty_argx] == [I pi ai].  *)
     Constr.mkLambda
       (name_argx,ty_argx,
-       let env = Environ.push_rel (name_argx,None,ty_argx) env in
+       let lifted_env = Environ.push_rel (name_argx,None,ty_argx) env in
        let concl = Vars.lift 1 concl in
+       let lifted_subst = Subst.lift 1 subst in
 
        match head with
        | ST.Leaf v ->
-        let abstracted_concl =
-          Unification.abstract_list_all_with_dependencies
-            env sigma return_type concl [ST.name_to_constr v] in
-        let substituted_concl =
-          Reductionops.whd_beta sigma
-            (Constr.mkApp (abstracted_concl,[|Constr.mkRel 1|])) in
-	 split_tree2diag env sigma
-	   (List.map (ST.replace v (ST.Rel 1)) ll)
-	   remaining_return_type
-           substituted_concl
+	 split_tree2diag lifted_env sigma (Subst.add lifted_env sigma lifted_subst v)
+	   ll return_type concl
        | ST.Constructor (ind, constructor, params, split_trees) ->
 	 (* we want to refine in the [constructor] constructor case. *)
 	 (* We need to build the return clause and the branches.
@@ -260,12 +327,12 @@ let rec split_tree2diag
 	    on and the conclusion we want is [forall stt -> Type] *)
 
 	 let return_clause,args =
-	   matched_type2diag env sigma (Constr.mkRel 1) (Vars.lift 1 ty_argx)
-	     remaining_return_type in (*we have the return clause *)
+	   matched_type2diag lifted_env sigma (Constr.mkRel 1)
+	     (Vars.lift 1 ty_argx) return_type in (*we have the return clause *)
 	 let real_body i cs branch_ty specialized_ctx =
 	   if i + 1 = constructor
 	   then (* recursive call *)
-	     split_tree2diag env sigma
+	     split_tree2diag lifted_env sigma lifted_subst
 	       (split_trees@List.map (fun x -> ST.Leaf x) args@ll)
 	       (Termops.it_mkProd_or_LetIn branch_ty cs.Inductiveops.cs_args)
 	       concl
@@ -277,7 +344,7 @@ let rec split_tree2diag
 	       (List.append specialized_ctx cs.Inductiveops.cs_args)
  	 in
 	 Term.applistc
-	   (mk_casei env sigma ind params (Constr.mkRel 1) return_clause real_body)
+	   (mk_casei lifted_env sigma ind params (Constr.mkRel 1) return_clause real_body)
 	   (List.map ST.name_to_constr args)
       )
 and matched_type2diag env sigma (tm: Constr.t) ty pre_concl =
@@ -288,7 +355,7 @@ and matched_type2diag env sigma (tm: Constr.t) ty pre_concl =
   let generalized_hyps,concl = prepare_conclusion env pre_concl split_trees  in
   let sort = Termops.new_sort_in_family sort_family in
   let return_type = Inductiveops.make_arity env true ind_family sort in
-  let result = split_tree2diag env sigma split_trees return_type concl in
+  let result = split_tree2diag env sigma Subst.empty split_trees return_type concl in
   (* put the result in eta long form *)
   let ctx = Inductiveops.make_arity_signature env true ind_family in
   let lifted_result = Vars.lift (Context.rel_context_length ctx) result in
@@ -358,7 +425,8 @@ let pose_diag h name gl =
   let h_ty = Tacmach.pf_get_hyp_typ gl h in
   let pre_concl = Tacmach.pf_concl gl in
   (* get the name of the inductive and the list of arguments it is applied to *)
-  let diag,_ = matched_type2diag env sigma (Constr.mkVar h) h_ty pre_concl in
+  let diag,_ = matched_type2diag env sigma (Constr.mkVar h)
+    h_ty pre_concl in
   Print.(eprint (stripes( string "final diag") ^/^ constr diag));
   cps_mk_letin "diag" diag (fun k -> Tacticals.tclIDTAC) gl
 
@@ -370,9 +438,11 @@ let invert h gl =
   (** ensures that the name x is fresh in the _first_ goal *)
   let (!!) x = Tactics.fresh_id [] ((Names.id_of_string x)) gl in
   (* get the name of the inductive and the list of arguments it is applied to *)
-  let diag,l = matched_type2diag env sigma (Constr.mkVar h) h_ty pre_concl in
+  let diag,l = matched_type2diag env sigma (Constr.mkVar h) h_ty
+    pre_concl in
   (* Each branch is a pair: type of the subgoal, body of the branch *)
-  let (ind_family, _) = Inductiveops.dest_ind_type (Inductiveops.find_rectype env sigma h_ty) in
+  let (ind_family, _) = Inductiveops.dest_ind_type
+    (Inductiveops.find_rectype env sigma h_ty) in
 
       let subtac =
 	   Tactics.clear (h :: (List.fold_left (fun acc x ->
