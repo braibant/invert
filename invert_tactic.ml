@@ -110,6 +110,14 @@ let rec split_tree2diag
     (concl: Term.constr)
     :Term.constr
     =
+  Print.(
+    let doc = messages 
+      ["split tree", separate_map semi constr split_trees;
+       "ty", constr return_type;
+       "concl", constr concl;
+      ] in 
+    eprint (prefix 2 2 (string "split_tree2diag") doc)
+  );
   match split_trees with
   | [] -> concl
   | head::ll ->
