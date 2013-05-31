@@ -41,8 +41,7 @@ Lemma l3 n h v :
 Proof. 
   intros H.
   invert H.
-  auto.
-  destruct n0; auto. Show Proof.
+  now intros.
 Qed.
 
 End t.

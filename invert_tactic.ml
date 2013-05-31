@@ -42,7 +42,7 @@ let mk_casei env sigma ind params term return_clause kf =
   in
   Constr.mkCase (case_info,return_clause,term,branches)
 
-let mk_case_tac ind_family term return_clause subtac k = fun gl ->
+let mk_case_tac ind_family term return_clause subtac invert k = fun gl ->
   let ind = fst (Inductiveops.dest_ind_family ind_family) in
   let env = Tacmach.pf_env gl in
   let sigma = Tacmach.project gl in
@@ -78,16 +78,34 @@ let mk_case_tac ind_family term return_clause subtac k = fun gl ->
 	  let body = Term.it_mkLambda_or_LetIn body ctx in
 	  build (succ i) l (body::acc ) gl
 	| _ ->
-	  let name = (Names.id_of_string "invert_subgoal") in
-	  let name =  Tactics.fresh_id [] name gl in
-	  let t = Tactics.assert_tac  (Names.Name name) branch_ty in
-	  Tacticals.tclTHENS t
-	    [   Tacticals.tclTHEN (Tactics.clear l) subtac;
+	    let name = (Names.id_of_string "invert_subgoal") in
+	    let name =  Tactics.fresh_id [] name gl in
+	    let t = Tactics.assert_tac  (Names.Name name) branch_ty in
+	    let subtac =
+	      (* If the goal is a case on an argument of the constructor,
+		 we invert this argument. *)
+	      try
+		let (t_head,_) = Term.decompose_app expectation in
+		let (_,_,locking_rel,_) = Term.destCase t_head in
+		let i = Term.destRel locking_rel in
+		(* invert the locking_rel *)
+		Tacticals.tclTHENLIST
+		  [
+		    subtac;
+		    Tacticals.tclDO
+		      (Context.rel_context_length ctx + Context.rel_context_length specialized_ctx - i + 1)
+		      Tactics.introf;
+		   fun gl -> invert (let (a,_,_) = Tacmach.pf_last_hyp gl in a) gl
+		  ]
+	      with Term.DestKO ->
+		subtac in
+	    Tacticals.tclTHENS t
+	      [   Tacticals.tclTHEN (Tactics.clear l) subtac;
 		  (* Tacticals.tclIDTAC; *)
-		build (succ i) (name :: l) ((Constr.mkVar name) :: acc)
-	    ] gl
+		  build (succ i) (name :: l) ((Constr.mkVar name) :: acc)
+	      ] gl
       end
-    else
+   else
       let term = Constr.mkCase (case_info, return_clause, term, (Array.of_list (List.rev acc))) in
       k term gl
   in
@@ -211,17 +229,17 @@ The 3 list have the same length ... *)
       [vars] by [args] in [t]. Rel context created by the [vars] is [ctx].
   *)
   let subst_in_type_when_possible env sigma ctx vars args t =
-  Print.(
-    let doc = messages
-      ["t", constr t;
-       "ctx", (rel_context ctx);
-       "vars", (surround_separate_map 2 1 (break 0) (lbrace) comma (rbrace) constr vars);
-       "args", (surround_separate_map 2 1 (break 0) (lbrace) comma (rbrace) constr (Array.to_list args));
-      ]
-    in
-    let msg = surround 2 2 (string "begin") doc (string "end") in
-    eprint msg
-  );
+  (* Print.( *)
+  (*   let doc = messages *)
+  (*     ["t", constr t; *)
+  (*      "ctx", (rel_context ctx); *)
+  (*      "vars", (surround_separate_map 2 1 (break 0) (lbrace) comma (rbrace) constr vars); *)
+  (*      "args", (surround_separate_map 2 1 (break 0) (lbrace) comma (rbrace) constr (Array.to_list args)); *)
+  (*     ] *)
+  (*   in *)
+  (*   let msg = surround 2 2 (string "begin") doc (string "end") in *)
+  (*   eprint msg *)
+  (* ); *)
 
     if CList.is_empty vars then t else
     let abstracted_ty = Term.mkArity (ctx,Termops.new_Type_sort ()) in
@@ -274,17 +292,17 @@ let rec split_tree2diag
     (return_type: Constr.types)
     (concl: Constr.t)
     =
-  Print.(
-    let doc = messages
-      ["subst", Subst.pp subst;
-	"stl", ST.pp_tl split_trees;
-       "return_type", constr return_type;
-       "concl", constr concl;
-      ]
-    in
-    let msg = surround 2 2 (string "begin") doc (string "end") in
-    eprint msg
-  );
+  (* Print.( *)
+  (*   let doc = messages *)
+  (*     ["subst", Subst.pp subst; *)
+  (* 	"stl", ST.pp_tl split_trees; *)
+  (*      "return_type", constr return_type; *)
+  (*      "concl", constr concl; *)
+  (*     ] *)
+  (*   in *)
+  (*   let msg = surround 2 2 (string "begin") doc (string "end") in *)
+  (*   eprint msg *)
+  (* ); *)
 
   let split_trees = ST.liftl 1 split_trees in
   match split_trees with
@@ -430,30 +448,24 @@ let pose_diag h name gl =
   Print.(eprint (stripes( string "final diag") ^/^ constr diag));
   cps_mk_letin "diag" diag (fun k -> Tacticals.tclIDTAC) gl
 
-let invert h gl =
+let rec invert h gl =
   let env = Tacmach.pf_env gl in
   let sigma = Tacmach.project gl in
-  let h_ty = Tacmach.pf_get_hyp_typ gl h in
-  let pre_concl = Tacmach.pf_concl gl in
-  (** ensures that the name x is fresh in the _first_ goal *)
-  let (!!) x = Tactics.fresh_id [] ((Names.id_of_string x)) gl in
-  (* get the name of the inductive and the list of arguments it is applied to *)
-  let diag,l = matched_type2diag env sigma (Constr.mkVar h) h_ty
-    pre_concl in
-  (* Each branch is a pair: type of the subgoal, body of the branch *)
-  let (ind_family, _) = Inductiveops.dest_ind_type
-    (Inductiveops.find_rectype env sigma h_ty) in
+  let term = Constr.mkVar h in
+  let ty = Tacmach.pf_get_hyp_typ gl h in
+  let concl = Tacmach.pf_concl gl in
 
+  let diag,l = matched_type2diag env sigma term ty concl in
+  let (ind_family, _) = Inductiveops.dest_ind_type
+    (Inductiveops.find_rectype env sigma ty) in
       let subtac =
-	   Tactics.clear (h :: (List.fold_left (fun acc x ->
-	       match x with
-	       | ST.Var n -> n::acc
-	       | _ -> acc
-	     ) [] l))
+	Tacticals.tclTHEN
+	  (Tactics.clear (List.fold_left (fun acc x ->
+	    match x with
+	    | ST.Var n -> n::acc
+	    | _ -> acc
+	   ) [] l)) (Tactics.clear [h])
       in
-      mk_case_tac ind_family (Constr.mkVar h) diag subtac
-	(
-	  fun term ->
-	    let term = Term.applistc term (List.map ST.name_to_constr l) in
-	    Tactics.refine term
-	) gl
+      mk_case_tac ind_family term diag subtac invert
+	(fun term -> Tactics.refine (Term.applistc term (List.map ST.name_to_constr l)))
+	gl
